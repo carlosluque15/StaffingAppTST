@@ -1,0 +1,13 @@
+docker compose up
+
+docker compose up --build
+
+docker compose down
+
+docker compose ps
+
+docker compose logs
+
+docker compose logs backend
+
+docker compose logs frontend
