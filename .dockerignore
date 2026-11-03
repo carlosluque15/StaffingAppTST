@@ -1,0 +1,16 @@
+.git
+.gitignore
+
+backend/.venv
+backend/__pycache__
+backend/**/__pycache__
+backend/*.pyc
+
+frontend/node_modules
+frontend/dist
+
+.env
+.env.*
+
+README.md
+compose.yaml
