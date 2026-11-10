@@ -874,3 +874,73 @@ class CompleteDemandTests(SearchAndSelectionTests):
         self.assertEqual((a.project_new, a.client, a.responsible, a.assignment_percent),
                          ("Proyecto X", "BBVA", "A-OUT", 40))
         self.assertEqual(str(a.finishing_on), "2027-03-31")
+
+
+    def test_sold_and_confirmed_end_are_persisted_and_validated(self):
+        self.select(self.in_offering)
+        self.assertEqual(self.complete({"sold": "yes"}).status_code, 400)
+        self.assertEqual(self.complete({"confirmedEnd": 1}).status_code, 400)
+        self.assertEqual(Assignment.objects.count(), 0)
+        ok = self.complete({"sold": False, "confirmedEnd": True})
+        self.assertEqual(ok.status_code, 201)
+        a = Assignment.objects.get()
+        self.assertEqual((a.sold, a.confirmed_end), ("False", "True"))
+
+
+class MentorTests(TestCase):
+    def person(self, aid, counselor="", deleted=False, row=[0]):
+        row[0] += 1
+        return Staff.objects.create(
+            source_row=row[0], accenture_id=aid, name=aid, career_counselor=counselor,
+            is_deleted=deleted, resource_fte="1",
+        )
+
+    def test_mentors_and_mentees(self):
+        self.person("boss.one")
+        self.person("gone.boss", deleted=True)
+        self.person("a", "Boss.One@accenture.com")
+        self.person("b", " boss.one ")
+        self.person("c", "ghost.id")
+        self.person("d", "gone.boss")
+        self.person("e")
+        self.person("f", "boss.one", deleted=True)
+        data = {m["id"]: m for m in self.client.get(reverse("mentors")).json()["mentors"]}
+        self.assertEqual(data["boss.one"]["menteeCount"], 2)
+        self.assertTrue(data["boss.one"]["found"])
+        self.assertFalse(data["ghost.id"]["found"])
+        self.assertTrue(data["gone.boss"]["deleted"])
+        self.assertEqual(data["_none"]["menteeCount"], 2)
+        mentees = self.client.get(reverse("mentor-mentees", args=["boss.one"])).json()["mentees"]
+        self.assertEqual(sorted(m["id"] for m in mentees), ["a", "b"])
+        none = self.client.get(reverse("mentor-mentees", args=["_none"])).json()
+        self.assertEqual(sorted(m["id"] for m in none["mentees"]), ["boss.one", "e"])
+        self.assertEqual(
+            self.client.get(reverse("mentor-mentees", args=["nobody"])).status_code, 404
+        )
+
+
+class TalentTests(TestCase):
+    def person(self, aid, deleted=False, row=[1000]):
+        row[0] += 1
+        return Staff.objects.create(
+            source_row=row[0], accenture_id=aid, name=aid, is_deleted=deleted,
+            resource_fte="1",
+        )
+
+    def test_talent_lists_active_with_availability(self):
+        busy = self.person("busy")
+        self.person("free")
+        self.person("gone", deleted=True)
+        self.person("")
+        today = timezone.localdate()
+        Assignment.objects.create(
+            source_id="as-1", resource="busy", assignment_percent=40,
+            starting_on=today - timedelta(days=5), finishing_on=today + timedelta(days=5),
+            sold="True", confirmed_end="False",
+        )
+        data = self.client.get(reverse("talent")).json()["talent"]
+        by_id = {p["id"]: p for p in data}
+        self.assertEqual(sorted(by_id), ["busy", "free"])
+        self.assertEqual(by_id["busy"]["availablePercent"], 60)
+        self.assertEqual(by_id["busy"]["assignedPercent"], 40)
+        self.assertEqual(by_id["free"]["availablePercent"], 100)

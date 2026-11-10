@@ -281,6 +281,26 @@ def candidates(request):
     )
 
 
+@require_http_methods(["GET"])
+def talent(request):
+    """All active staff with their occupancy today."""
+    people = list(Staff.objects.filter(is_deleted=False).exclude(accenture_id=""))
+    on_date = timezone.localdate()
+    grouped = availability.assignments_by_resource([s.accenture_id for s in people])
+    data = []
+    for staff in people:
+        info = availability.occupancy(
+            staff, on_date, grouped.get(staff.accenture_id.casefold(), [])
+        )
+        data.append({
+            **_candidate_data(staff),
+            "capacityPercent": info["capacityPercent"],
+            "assignedPercent": info["assignedPercent"],
+            "availablePercent": info["availablePercent"],
+        })
+    return JsonResponse({"talent": data})
+
+
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
 def demands(request):
@@ -565,6 +585,8 @@ def _assignment_defaults(demand):
         "finishingOn": _demand_end_date(demand).isoformat(),
         "assignmentPercent": _demand_percent_value(demand),
         "comments": "",
+        "sold": True,
+        "confirmedEnd": False,
     }
 
 
@@ -579,6 +601,14 @@ def _text_field(payload, key, default, errors, max_length=200):
         errors[key] = [f"Debe ser texto de hasta {max_length} caracteres."]
         return ""
     return value.strip()
+
+
+def _bool_field(payload, key, default, errors):
+    value = payload.get(key, default)
+    if not isinstance(value, bool):
+        errors[key] = ["Debe ser verdadero o falso."]
+        return default
+    return value
 
 
 def _date_field(payload, key, default, errors):
@@ -656,6 +686,10 @@ def complete_demand(request, code):
                 else:
                     responsible = owner.accenture_id
             comments = _text_field(payload, "comments", "", errors, 2000)
+            sold = _bool_field(payload, "sold", defaults["sold"], errors)
+            confirmed_end = _bool_field(
+                payload, "confirmedEnd", defaults["confirmedEnd"], errors
+            )
             start = _date_field(payload, "startingOn", defaults["startingOn"], errors)
             end = _date_field(payload, "finishingOn", defaults["finishingOn"], errors)
             if not project and "project" not in errors:
@@ -710,8 +744,8 @@ def complete_demand(request, code):
                     client=client,
                     industry=industry,
                     responsible=responsible,
-                    sold="True",
-                    confirmed_end="False",
+                    sold=str(sold),
+                    confirmed_end=str(confirmed_end),
                     starting_date=_csv_date(start),
                     finishing_date=_csv_date(end),
                     starting_on=start,
@@ -747,3 +781,98 @@ def complete_demand(request, code):
             for a in created
         ],
     }, status=201)
+
+
+
+NO_MENTOR = "_none"
+
+
+def _mentor_key(value):
+    """Normalized mentor id: trimmed, lowercase, without the email domain."""
+    key = (value or "").strip().casefold()
+    return key.removesuffix("@accenture.com")
+
+
+def _staff_by_key():
+    """Staff by normalized id; active people win over deleted/duplicate rows."""
+    result = {}
+    for staff in Staff.objects.exclude(accenture_id="").order_by("source_row"):
+        key = _mentor_key(staff.accenture_id)
+        current = result.get(key)
+        if current is None or (current.is_deleted and not staff.is_deleted):
+            result[key] = staff
+    return result
+
+
+def _active_mentees():
+    return Staff.objects.filter(is_deleted=False).order_by("surname", "name", "source_row")
+
+
+@require_http_methods(["GET"])
+def mentors(request):
+    people = _staff_by_key()
+    counts = {}
+    for counselor in _active_mentees().values_list("career_counselor", flat=True):
+        key = _mentor_key(counselor) or NO_MENTOR
+        counts[key] = counts.get(key, 0) + 1
+    result = []
+    for key, count in counts.items():
+        staff = people.get(key)
+        result.append({
+            "id": key,
+            "name": _candidate_data(staff)["name"] if staff else key,
+            "found": staff is not None or key == NO_MENTOR,
+            "deleted": bool(staff and staff.is_deleted),
+            "menteeCount": count,
+        })
+    result.sort(key=lambda m: (m["id"] == NO_MENTOR, m["name"].casefold()))
+    for mentor in result:
+        if mentor["id"] == NO_MENTOR:
+            mentor["name"] = "Sin mentor asignado"
+    return JsonResponse({"mentors": result})
+
+
+@require_http_methods(["GET"])
+def mentor_mentees(request, mentor_id):
+    key = mentor_id.strip().casefold()
+    mentees = [
+        s for s in _active_mentees()
+        if (_mentor_key(s.career_counselor) or NO_MENTOR) == key
+    ]
+    if not mentees:
+        return JsonResponse({"error": "Mentor not found."}, status=404)
+    on_date = timezone.localdate()
+    grouped = availability.assignments_by_resource([s.accenture_id for s in mentees])
+    data = []
+    for staff in mentees:
+        assignments = grouped.get(staff.accenture_id.casefold(), [])
+        info = availability.occupancy(staff, on_date, assignments)
+        data.append({
+            **_candidate_data(staff),
+            "capacityPercent": info["capacityPercent"],
+            "assignedPercent": info["assignedPercent"],
+            "availablePercent": info["availablePercent"],
+            "assignments": [
+                {
+                    "id": a.source_id,
+                    "project": a.project_name,
+                    "client": a.client,
+                    "startingOn": a.starting_on.isoformat() if a.starting_on else None,
+                    "finishingOn": a.finishing_on.isoformat() if a.finishing_on else None,
+                    "assignmentPercent": a.assignment_percent,
+                }
+                for a in info["assignments"]
+            ],
+        })
+    mentor = _staff_by_key().get(key)
+    return JsonResponse({
+        "mentor": {
+            "id": key,
+            "name": "Sin mentor asignado" if key == NO_MENTOR
+            else (_candidate_data(mentor)["name"] if mentor else key),
+            "found": mentor is not None or key == NO_MENTOR,
+            "deleted": bool(mentor and mentor.is_deleted),
+        },
+        "referenceDate": on_date.isoformat(),
+        "mentees": data,
+    })

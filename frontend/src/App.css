@@ -2514,3 +2514,12 @@
 .complete-candidates label { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .complete-candidates small { display: block; margin: 3px 0 0 24px; color: #77717e; }
 .complete-modal .form-footer { margin-top: 18px; }
+
+.mentors-page { display: grid; gap: 16px; }
+.mentees-table { width: 100%; border-collapse: collapse; background: #fff; }
+.mentees-table th, .mentees-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e5e5ea; vertical-align: top; }
+.mentees-table th { font-size: 0.8rem; text-transform: uppercase; color: #5c5c66; }
+
+.talent-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 16px 0; }
+.talent-table .clickable-row { cursor: pointer; }
+.talent-table .clickable-row:hover { background: #f5f0ff; }

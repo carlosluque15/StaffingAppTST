@@ -16,6 +16,7 @@ class Staff(models.Model):
     sub_alignment = models.CharField(max_length=120, blank=True)
     industry = models.CharField(max_length=120, blank=True)
     resource_fte = models.CharField(max_length=40, blank=True)
+    career_counselor = models.CharField(max_length=160, blank=True, db_index=True)
     source_data = models.JSONField(default=dict)
 
     class Meta:

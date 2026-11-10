@@ -20,6 +20,7 @@ STAFF_FIELDS = {
     "Sub-alignment": "sub_alignment",
     "Industry": "industry",
     "Resource FTE": "resource_fte",
+    "Career Counselor": "career_counselor",
 }
 
 ASSIGNMENT_FIELDS = {

@@ -5,7 +5,8 @@ import "./App.css";
 const navigation = [
   { id: "home", label: "Inicio", icon: "home" },
   { id: "demands", label: "Demandas", icon: "briefcase" },
-  { id: "results", label: "Candidatos", icon: "users" },
+  { id: "talent", label: "Talento", icon: "users" },
+  { id: "mentors", label: "Mentores", icon: "users" },
 ];
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -540,6 +541,129 @@ function CandidateModal({ candidate, onClose }) {
   );
 }
 
+function TalentPage({ onOpenCandidate }) {
+  const [people, setPeople] = useState(null);
+  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [level, setLevel] = useState("");
+  const [location, setLocation] = useState("");
+  const [minFree, setMinFree] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    requestApi("talent/")
+      .then((data) => { if (active) setPeople(data.talent); })
+      .catch((requestError) => { if (active) setError(requestError.message); });
+    return () => { active = false; };
+  }, []);
+
+  if (error) return <p className="form-error" role="alert">{error}</p>;
+  if (!people) return <p className="api-note" role="status">Cargando...</p>;
+
+  const options = (key) => [...new Set(people.map((person) => person[key]).filter(Boolean))].sort();
+  const needle = query.trim().toLowerCase();
+  const filtered = people.filter((person) => {
+    if (needle && ![person.name, person.id, person.role].some((value) => (value || "").toLowerCase().includes(needle))) return false;
+    if (level && person.careerLevel !== level) return false;
+    if (location && person.location !== location) return false;
+    if (minFree && !(person.availablePercent >= Number(minFree))) return false;
+    return true;
+  });
+
+  return (
+    <section className="talent-page">
+      <div className="page-heading"><div><p className="eyebrow">Staff</p><h1>Talento</h1><p>Busca y filtra a las personas del Staff.</p></div></div>
+      <div className="talent-filters">
+        <label className="field"><span>Buscar</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Nombre, id o rol" /></label>
+        <label className="field"><span>Nivel de carrera</span><select value={level} onChange={(event) => setLevel(event.target.value)}><option value="">Todos</option>{options("careerLevel").map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label className="field"><span>Ubicación</span><select value={location} onChange={(event) => setLocation(event.target.value)}><option value="">Todas</option>{options("location").map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label className="field"><span>Disponibilidad libre</span><select value={minFree} onChange={(event) => setMinFree(event.target.value)}><option value="">Cualquiera</option><option value="25">≥ 25 %</option><option value="50">≥ 50 %</option><option value="100">≥ 100 %</option></select></label>
+      </div>
+      <p className="api-note" role="status">{filtered.length} de {people.length} personas</p>
+      {filtered.length === 0 ? <p className="api-note">Ninguna persona coincide con la búsqueda.</p> : (
+        <table className="mentees-table talent-table">
+          <thead><tr><th>Persona</th><th>Rol</th><th>Nivel</th><th>Ubicación</th><th>Ocupación</th><th>Libre</th></tr></thead>
+          <tbody>
+            {filtered.map((person) => (
+              <tr key={person.id} className="clickable-row" tabIndex={0} onClick={() => onOpenCandidate(person)} onKeyDown={(event) => event.key === "Enter" && onOpenCandidate(person)}>
+                <td><strong>{person.name}</strong><br /><small>{person.id}</small></td>
+                <td>{person.role || "N/D"}</td>
+                <td>{person.careerLevel || "N/D"}</td>
+                <td>{person.location || "N/D"}</td>
+                <td>{formatPercent(person.assignedPercent)} / {formatPercent(person.capacityPercent)}</td>
+                <td>{formatPercent(person.availablePercent)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+function MentorsPage() {
+  const [mentors, setMentors] = useState([]);
+  const [selected, setSelected] = useState("");
+  const [detail, setDetail] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    requestApi("mentors/")
+      .then((data) => {
+        if (!active) return;
+        setMentors(data.mentors);
+        setSelected(data.mentors[0]?.id ?? "");
+      })
+      .catch((requestError) => active && setError(requestError.message));
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!selected) return undefined;
+    let active = true;
+    setDetail(null);
+    requestApi(`mentors/${encodeURIComponent(selected)}/mentees/`)
+      .then((data) => active && setDetail(data))
+      .catch((requestError) => active && setError(requestError.message));
+    return () => { active = false; };
+  }, [selected]);
+
+  return (
+    <section className="mentors-page">
+      <label className="field">
+        <span>Mentor</span>
+        <select value={selected} onChange={(event) => { setError(""); setSelected(event.target.value); }}>
+          {mentors.map((mentor) => (
+            <option key={mentor.id} value={mentor.id}>
+              {mentor.name} ({mentor.menteeCount}){mentor.found ? "" : " · no encontrado en Staff"}{mentor.deleted ? " · dado de baja" : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      {!detail && !error && <p className="api-note" role="status">Cargando...</p>}
+      {detail && (
+        <table className="mentees-table">
+          <thead><tr><th>Mentorado</th><th>Rol</th><th>Nivel</th><th>Ciudad</th><th>Ocupación</th><th>Asignaciones activas</th></tr></thead>
+          <tbody>
+            {detail.mentees.map((mentee) => (
+              <tr key={mentee.id}>
+                <td><strong>{mentee.name}</strong><br /><small>{mentee.id}</small></td>
+                <td>{mentee.role || "N/D"}</td>
+                <td>{mentee.careerLevel || "N/D"}</td>
+                <td>{mentee.location || "N/D"}</td>
+                <td>{formatPercent(mentee.assignedPercent)} / {formatPercent(mentee.capacityPercent)}</td>
+                <td>{mentee.assignments.length === 0 ? "Sin asignaciones" : mentee.assignments.map((a) => `${a.project || "Sin proyecto"} (${a.assignmentPercent ?? "?"}%)`).join(", ")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 function CompleteDemandModal({ demand, catalog, onClose, onCompleted }) {
   const [form, setForm] = useState(null);
   const [candidates, setCandidates] = useState([]);
@@ -642,6 +766,8 @@ function CompleteDemandModal({ demand, catalog, onClose, onCompleted }) {
               <label className="field"><span>Fecha de fin <b>*</b></span><input type="date" value={form.finishingOn} onChange={(e) => update("finishingOn", e.target.value)} /></label>
               <label className="field"><span>% de dedicación</span><input type="number" min="1" max="100" value={form.assignmentPercent} onChange={(e) => update("assignmentPercent", e.target.value)} placeholder="Ej. 50" /><small>Si lo dejas vacío se usa toda la capacidad libre de cada persona.</small></label>
               <label className="field"><span>Responsable</span><select value={form.responsible} onChange={(e) => update("responsible", e.target.value)}><option value="">Sin especificar</option>{responsibles.map((person) => <option key={person.id} value={person.id}>{person.name} ({person.id})</option>)}</select><small>Persona que lidera el proyecto.</small></label>
+              <label className="field"><span>Vendido</span><input type="checkbox" checked={!!form.sold} onChange={(e) => update("sold", e.target.checked)} /></label>
+              <label className="field"><span>Fin confirmado</span><input type="checkbox" checked={!!form.confirmedEnd} onChange={(e) => update("confirmedEnd", e.target.checked)} /></label>
               <label className="field field-full"><span>Comentarios</span><textarea rows="3" value={form.comments} onChange={(e) => update("comments", e.target.value)} /></label>
             </div>
             {error && <p className="form-error" role="alert">{error}</p>}
@@ -808,7 +934,7 @@ function Workspace() {
     setReloadKey((key) => key + 1);
   }
 
-  const pageTitle = page === "home" ? "Inicio" : page === "demands" ? "Demandas" : page === "results" ? "Candidatos" : page === "edit" ? "Editar demanda" : "Crear demanda";
+  const pageTitle = page === "home" ? "Inicio" : page === "demands" ? "Demandas" : page === "talent" ? "Talento" : page === "results" ? "Candidatos" : page === "mentors" ? "Mentores" : page === "edit" ? "Editar demanda" : "Crear demanda";
 
   if (loading) {
     return <main className="api-state"><p>Cargando datos...</p></main>;
@@ -847,6 +973,8 @@ function Workspace() {
           )}
           {page === "create" && <DemandForm catalog={catalog} onCancel={() => setPage("demands")} onSubmit={createDemand} />}
           {page === "edit" && editingDemand && <DemandForm key={editingDemand.id} demand={editingDemand} catalog={catalog} onCancel={() => { setEditingDemand(null); setPage("demands"); }} onSubmit={saveDemand} />}
+          {page === "talent" && <TalentPage onOpenCandidate={setDetailCandidate} />}
+          {page === "mentors" && <MentorsPage />}
           {page === "results" && <ResultsPage demand={activeDemand} onBack={() => setPage("demands")} onOpenCandidate={setDetailCandidate} onDemandChanged={refreshDemand} onComplete={setCompleting} />}
         </main>
       </div>

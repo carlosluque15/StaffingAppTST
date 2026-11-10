@@ -9,6 +9,9 @@ from .views import (
     demand_search,
     demands,
     health_check,
+    mentor_mentees,
+    mentors,
+    talent,
     staff_availability,
 )
 
@@ -17,6 +20,9 @@ urlpatterns = [
     path("catalog/", catalog, name="catalog"),
     path("candidates/", candidates, name="candidates"),
     path("staff/<str:accenture_id>/availability/", staff_availability, name="staff-availability"),
+    path("talent/", talent, name="talent"),
+    path("mentors/", mentors, name="mentors"),
+    path("mentors/<str:mentor_id>/mentees/", mentor_mentees, name="mentor-mentees"),
     path("demands/", demands, name="demands"),
     path("demands/<str:code>/", demand_detail, name="demand-detail"),
     path("demands/<str:code>/search/", demand_search, name="demand-search"),
