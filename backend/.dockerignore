@@ -1,0 +1,12 @@
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+*.sqlite3
+staticfiles
+*.csv
+!sample-data/*.csv
+.env
+.env.*
+.git
+.gitignore

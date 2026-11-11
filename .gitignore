@@ -1,7 +1,18 @@
 backend/.venv/
 backend/__pycache__/
 backend/**/__pycache__/
+backend/staticfiles/
+backend/db.sqlite3
 frontend/node_modules/
 frontend/dist/
 .env
+.env.*
+!.env.example
 *.pyc
+
+# Datos personales: nunca al repositorio ni a las imagenes
+/Staff.csv
+/Assignments.csv
+*.sqlite3
+# Copias de seguridad de la BBDD con datos reales
+backups/

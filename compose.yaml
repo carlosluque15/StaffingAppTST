@@ -24,8 +24,9 @@ services:
       - "5432:5432"
     volumes:
       - ./backend:/app
-      - ./Staff.csv:/imports/Staff.csv:ro
-      - ./Assignments.csv:/imports/Assignments.csv:ro
+      # Por defecto datos inventados; para los reales: CSV_DIR=. docker compose up
+      - ${CSV_DIR:-./backend/sample-data}/Staff.csv:/imports/Staff.csv:ro
+      - ${CSV_DIR:-./backend/sample-data}/Assignments.csv:/imports/Assignments.csv:ro
     environment:
       DJANGO_DEBUG: ${DJANGO_DEBUG:-true}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-}
@@ -43,6 +44,7 @@ services:
   frontend:
     build:
       context: ./frontend
+      target: dev
     container_name: staffing-frontend
     ports:
       - "5173:5173"

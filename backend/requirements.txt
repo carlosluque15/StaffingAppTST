@@ -4,3 +4,4 @@ django-cors-headers==4.9.0
 gunicorn>=23,<24
 psycopg[binary]>=3.2,<4
 sqlparse==0.6.1
+whitenoise>=6.9,<7

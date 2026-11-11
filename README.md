@@ -26,6 +26,10 @@ La API ofrece:
 - `GET /api/demands/<code>/search/?stage=initial|expanded`: búsqueda por etapas
   (ver más abajo). Responde `409 offering_mapping_missing` si el offering de la
   demanda no tiene correspondencia configurada.
+- `GET /api/assignments/?scope=active|all`: asignaciones enlazadas con su persona
+  (nivel, industria con respaldo de Staff). `active` (por defecto) solo las vigentes
+  hoy; `all` incluye el histórico y las personas de baja (`personDeleted`). La pestaña
+  «Asignaciones» las agrupa en el navegador por proyecto, cliente, career level o industria.
 - `GET /api/candidates/`: lista perfiles de candidatos activos (sin eliminados).
 
 Los estados de demanda permitidos son `Nueva`, `Búsqueda en curso`,
@@ -58,35 +62,49 @@ Se carga en la migración 0006 y se administra en Django Admin (*Catalog values*
 industria, área, localización o nivel que no estén en él (`Remoto` se admite).
 Industrias, localizaciones y niveles coinciden exactamente con los valores de
 `Staff`, así que filtran sin mapping: nivel = `Career Level Group`, industria =
-`Industry` de Staff o de una asignación activa, localización = `Deployment City`.
+`Industry` de Staff o de una asignación activa (quien no tiene ninguna industria
+conocida no se excluye: se muestra como «Industria sin datos»; solo se excluye si
+tiene industria y ninguna coincide), localización = `Deployment City`.
 
 ### Secciones de resultados
-- **`initial`**: personal del área/offering de la demanda.
-- **`expanded`**: resto del personal con offering.
-- **Bolsa transversal**: personal sin offering (`Empty`/vacío); aparece en
-  **todas** las búsquedas, en cualquier etapa, con los mismos criterios, y se
-  puede seleccionar (`searchStage=transversal`).
+El offering de una demanda es la **Organization Unit** de `Staff`.
+- **`initial`**: personal de la Organization Unit de la demanda.
+- **`expanded`**: personal de otras Organization Units, salvo analistas.
+- **Bolsa transversal**: **analistas** (`Career Level Group = Analyst`) de otras
+  Organization Units; aparece en **todas** las búsquedas, en cualquier etapa, con
+  los mismos criterios salvo el nivel de la demanda (no se aplica), y se puede
+  seleccionar (`searchStage=transversal`). La UI ofrece filtros locales.
 
-El área no es una columna de Staff, por lo que se resuelve con
-`CriterionMapping` (Admin). La migración siembra, **por inferencia a partir de
-`Role` ("<área> <nivel>") y pendiente de confirmar**: `Enterprise Architecture` →
-role que empieza por `Enterprise Architect`, `Technology Strategy` y
-`Transformation Excellence` → role con ese prefijo. Sin mapping la búsqueda
-devuelve 409. Roles fuera del catálogo (p. ej. `Cloud Advisory`) caen en
-`expanded`; "sin offering" = `Role` vacío o `Empty`.
+El catálogo de offerings se alimenta de los valores distintos de
+`Organization Unit` al importar (migración 0008 siembra los principales) y cada
+valor se mapea a sí mismo en `CriterionMapping` (`organization_unit`). Las demandas
+creadas con las áreas antiguas (Enterprise Architecture, Technology Strategy,
+Transformation Excellence) deben reeditarse con una Organization Unit; mientras
+tanto su búsqueda devuelve 409. El rol de la demanda es opcional.
+
+### Importación de CSV
+Los `Accenture Id` repetidos entre activos se deduplican (se conserva la fila con
+más columnas rellenas, la última si empatan) y los activos sin id se omiten, con
+avisos en stderr y «N duplicados descartados» en el resumen. Si la importación
+falla en `docker compose up`, el backend arranca igualmente con los datos previos.
 
 ### Disponibilidad
+La página Talento muestra la columna «Obligatorio» (umbral de su nivel) con
+«Cumple»/«Pendiente» según su ocupación de hoy.
+
 Una persona **no está disponible** cuando la suma de sus asignaciones activas
 (`% Assignment`, a la fecha de referencia) alcanza el umbral de su nivel:
 Analyst y Consultant 100%, Manager 85.6%, Senior Manager 74.4%, Associate
 Director 73.6%, Accenture Leadership 46%. Además, la capacidad libre
 (`FTE×100 − asignado`) debe cubrir la ocupación de la demanda (`Flexible` no
-filtra). Fecha de referencia: `Inmediata`=hoy, `2 semanas`=+14 días, `1 mes`=+30,
-`3 meses`=+90. Asunciones a confirmar: que el umbral se compara con la suma
+filtra). Fecha de referencia: la fecha de inicio de la demanda (`startDate`), o hoy si
+ya pasó. Asunciones a confirmar: que el umbral se compara con la suma
 absoluta de `% Assignment`, y que "alcanza" es `>=`. Si el FTE o algún porcentaje
 no es interpretable la persona se excluye (`excluded.unknownCapacity`).
 Se desconocen las asignaciones futuras (los CSV solo traen las activas).
 No hay habilidades estructuradas, afinidad, puntuación ni LLM; el orden es alfabético.
+
+Las habilidades clave quedan fuera del formulario de demanda hasta integrar la IA. El campo `skills` se conserva en la API y la base de datos (opcional, por defecto `[]`), de modo que las demandas existentes no pierden datos.
 
 ### Selecciones y estado de la demanda
 
@@ -107,6 +125,14 @@ el PowerPoint (o su ubicación), la clave que enlaza cada diapositiva con el
 `Accenture Id` en lugar de las iniciales, y una decisión sobre dónde se
 almacenarán los CV sin SharePoint.
 
+## Informes
+
+La pestaña **Informes** descarga tablas de la BBDD en CSV (UTF-8 con BOM, para Excel):
+`GET /api/reports/staff.csv` y `GET /api/reports/assignments.csv`. Usan las columnas
+originales de los CSV importados (`source_data`) e incluyen personas borradas. Los valores
+que empiezan por `=`, `+`, `-` o `@` (y no son numéricos) se prefijan con `'` contra
+inyección de fórmulas. Nuevos informes van bajo el prefijo `reports/`.
+
 ## Ejecución local con Docker Compose
 
 ```bash
@@ -125,6 +151,15 @@ docker compose exec backend python manage.py createsuperuser
 ```
 
 El panel queda disponible en `http://localhost:8000/admin/`.
+
+## Datos de ejemplo y variables de entorno
+
+`docker compose up` importa por defecto `backend/sample-data/` (personal y asignaciones
+**inventados**, mismas columnas que los CSV reales; se regeneran con
+`python3 scripts/generate_sample_data.py`). Para usar los CSV reales de la raíz:
+`CSV_DIR=. docker compose up`. Todas las variables y dónde guardar cada secreto:
+[docs/VARIABLES.md](docs/VARIABLES.md). Prueba de las imágenes de producción:
+`docker compose -f compose.prod.yaml up --build`.
 
 ## Importar las exportaciones CSV
 

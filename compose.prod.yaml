@@ -1,0 +1,92 @@
+# Prueba local de las imagenes de produccion (las mismas que se subiran a la nube).
+#
+#   docker compose -f compose.prod.yaml up --build
+#
+# Requiere un .env con DJANGO_SECRET_KEY no vacia (ver .env.example).
+# Frontend: http://localhost:8080   API: http://localhost:8000
+#
+# Importar los CSV (una sola vez, bajo demanda):
+#   docker compose -f compose.prod.yaml --profile import run --rm import
+
+services:
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-staffing}
+      POSTGRES_USER: ${DB_USER:-staffing}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-staffing-local}
+    volumes:
+      - postgres-data-prod:/var/lib/postgresql/data
+    # Sin "ports": la base de datos solo es accesible desde la red de compose.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-staffing} -d ${DB_NAME:-staffing}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Paso de despliegue: aplica migraciones y termina (en la nube: un Job).
+  migrate:
+    build:
+      context: ./backend
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    environment: &backend-env
+      DJANGO_DEBUG: "false"
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Define DJANGO_SECRET_KEY en .env}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS_PROD:-http://localhost:8080}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-http://localhost:8000}
+      DB_NAME: ${DB_NAME:-staffing}
+      DB_USER: ${DB_USER:-staffing}
+      DB_PASSWORD: ${DB_PASSWORD:-staffing-local}
+      DB_HOST: db
+      DB_PORT: "5432"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    environment: *backend-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: ./frontend
+      target: prod
+      args:
+        # Se incrusta al compilar: debe ser la URL de la API vista desde el navegador.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL_PROD:-http://localhost:8000}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - backend
+
+  # Importacion manual de CSV: los ficheros se montan, no van dentro de la imagen.
+  import:
+    profiles: ["import"]
+    build:
+      context: ./backend
+    command:
+      - python
+      - manage.py
+      - import_staffing_csvs
+      - --staff-csv=/imports/Staff.csv
+      - --assignments-csv=/imports/Assignments.csv
+      - --replace
+    environment: *backend-env
+    volumes:
+      # Por defecto datos inventados; para los reales: CSV_DIR=. docker compose ...
+      - ${CSV_DIR:-./backend/sample-data}/Staff.csv:/imports/Staff.csv:ro
+      - ${CSV_DIR:-./backend/sample-data}/Assignments.csv:/imports/Assignments.csv:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-data-prod:

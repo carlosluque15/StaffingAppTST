@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Catálogo de Staffing</title>
+  <style>
+    :root {
+      --bg: #f7f7f8;
+      --surface: #ffffff;
+      --surface-selected: #f1f0ef;
+      --text: #2f2f32;
+      --muted: #66666b;
+      --line: #e9e9eb;
+      --accent: #007c89;
+      --rail: #dedede;
+      --shadow: 0 10px 30px rgba(31, 35, 40, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    .page {
+      width: min(1180px, calc(100% - 32px));
+      margin: 32px auto;
+    }
+
+    .header {
+      margin-bottom: 24px;
+    }
+
+    .header h1 {
+      margin: 0 0 8px;
+      font-size: clamp(26px, 4vw, 38px);
+      font-weight: 650;
+    }
+
+    .header p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 22px;
+      align-items: start;
+    }
+
+    .card {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .card.wide { grid-column: 1 / -1; }
+
+    .card-title {
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--line);
+      font-size: 18px;
+      font-weight: 650;
+    }
+
+    .group-button,
+    .row {
+      position: relative;
+      display: grid;
+      width: 100%;
+      min-height: 72px;
+      align-items: center;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+      color: inherit;
+      font: inherit;
+      text-align: left;
+    }
+
+    .group-button {
+      grid-template-columns: 42px 1fr auto;
+      padding: 0 20px 0 28px;
+      cursor: pointer;
+    }
+
+    .group-button:hover { background: #f8f8f8; }
+    .group-button[aria-expanded="true"] { background: var(--surface-selected); }
+
+    .group-button::before,
+    .row::before {
+      content: "";
+      position: absolute;
+      left: 7px;
+      top: 13px;
+      bottom: 13px;
+      width: 6px;
+      border-radius: 999px;
+      background: var(--rail);
+    }
+
+    .check {
+      display: inline-grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border: 1.5px solid #727272;
+      border-radius: 50%;
+      color: #555;
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .check.empty { color: transparent; }
+
+    .menu {
+      padding: 8px;
+      color: var(--muted);
+      letter-spacing: 3px;
+      font-weight: 700;
+    }
+
+    .children[hidden] { display: none; }
+
+    .children .row {
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      padding: 0 28px 0 82px;
+    }
+
+    .row:last-child { border-bottom: 0; }
+    .label { font-size: 18px; line-height: 1.25; }
+
+    .small-icon {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border: 1px solid #b9bec4;
+      border-radius: 5px;
+      color: var(--accent);
+      font-size: 15px;
+      background: #fff;
+    }
+
+    .table-header,
+    .data-row {
+      display: grid;
+      grid-template-columns: 1.2fr .8fr;
+      align-items: center;
+    }
+
+    .table-header {
+      min-height: 58px;
+      padding: 0 26px 0 48px;
+      border-bottom: 1px solid var(--line);
+      font-weight: 650;
+    }
+
+    .data-row {
+      position: relative;
+      min-height: 74px;
+      margin-left: 24px;
+      padding: 0 26px 0 52px;
+      border-bottom: 1px solid var(--line);
+      font-size: 18px;
+    }
+
+    .data-row::before {
+      content: "";
+      position: absolute;
+      left: 2px;
+      top: 13px;
+      bottom: 13px;
+      width: 6px;
+      border-radius: 999px;
+      background: var(--rail);
+    }
+
+    .data-row:last-child { border-bottom: 0; }
+    .link { color: var(--accent); text-decoration: underline; }
+
+    .career-header,
+    .career-row {
+      display: grid;
+      grid-template-columns: minmax(200px, 1.4fr) minmax(130px, .9fr) minmax(100px, .55fr);
+      gap: 18px;
+      align-items: center;
+    }
+
+    .career-header {
+      padding: 14px 28px 14px 90px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+    .career-row {
+      position: relative;
+      min-height: 74px;
+      padding: 0 28px 0 90px;
+      border-bottom: 1px solid var(--line);
+      font-size: 18px;
+    }
+
+    .career-row::before {
+      content: "";
+      position: absolute;
+      left: 16px;
+      top: 13px;
+      bottom: 13px;
+      width: 6px;
+      border-radius: 999px;
+      background: var(--rail);
+    }
+
+    .career-row:last-child { border-bottom: 0; }
+    .career-row.selected { background: var(--surface-selected); }
+    .career-row .check { position: absolute; left: 38px; width: 26px; height: 26px; }
+    .metric { color: #50545a; }
+
+    @media (max-width: 760px) {
+      .page { width: min(100% - 20px, 1180px); margin: 18px auto; }
+      .grid { grid-template-columns: 1fr; }
+      .card.wide { grid-column: auto; }
+      .children .row { padding-left: 62px; }
+      .career-header { display: none; }
+      .career-row {
+        grid-template-columns: 1fr auto;
+        padding: 16px 18px 16px 68px;
+      }
+      .career-row .check { left: 30px; }
+      .career-row .metric:last-child { grid-column: 1 / -1; font-size: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="header">
+      <h1>Catálogo de Staffing</h1>
+      <p>Vista consolidada de industrias, localizaciones, áreas y niveles profesionales.</p>
+    </header>
+
+    <section class="grid">
+      <article class="card">
+        <div class="card-title">Industrias</div>
+        <button class="group-button" type="button" aria-expanded="true" aria-controls="industry-list">
+          <span class="check empty">✓</span>
+          <span class="label">Financial Services</span>
+          <span class="menu" aria-hidden="true">•••</span>
+        </button>
+        <div class="children" id="industry-list">
+          <div class="row"><span class="label">Products</span><span class="small-icon" aria-label="Imagen">▧</span></div>
+          <div class="row"><span class="label">Communications, Media &amp; Technology</span><span class="small-icon" aria-label="Imagen">▧</span></div>
+          <div class="row"><span class="label">Resources</span><span class="small-icon" aria-label="Imagen">▧</span></div>
+          <div class="row"><span class="label">Health &amp; Public Services</span><span class="small-icon" aria-label="Imagen">▧</span></div>
+          <div class="row"><span class="label">Technology Strategy</span><span class="small-icon" aria-label="Imagen">▧</span></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-title">Localizaciones</div>
+        <div class="table-header"><span>City</span><span>Country</span></div>
+        <div class="data-row"><span>Madrid</span><a class="link" href="#spain">Spain</a></div>
+        <div class="data-row"><span>Barcelona</span><a class="link" href="#spain">Spain</a></div>
+        <div class="data-row"><span>Bilbao</span><a class="link" href="#spain">Spain</a></div>
+      </article>
+
+      <article class="card">
+        <div class="card-title">Áreas</div>
+        <div class="row" style="padding:0 28px 0 82px"><span class="label">Enterprise Architecture</span></div>
+        <button class="group-button" type="button" aria-expanded="true" aria-controls="area-list">
+          <span class="check">✓</span>
+          <span class="label">Empty</span>
+          <span class="menu" aria-hidden="true">•••</span>
+        </button>
+        <div class="children" id="area-list">
+          <div class="row"><span class="label">Technology Strategy</span></div>
+          <div class="row"><span class="label">Transformation Excellence</span></div>
+        </div>
+      </article>
+
+      <article class="card wide">
+        <div class="card-title">Niveles profesionales</div>
+        <div class="career-header"><span>Nivel</span><span>Valor</span><span>Disponibilidad</span></div>
+        <div class="career-row selected"><span class="check">✓</span><span>Manager</span><span class="metric">7</span><span class="metric">85.6%</span></div>
+        <div class="career-row"><span>Consultant</span><span class="metric">9</span><span class="metric">100%</span></div>
+        <div class="career-row"><span>Analyst</span><span class="metric">11</span><span class="metric">100%</span></div>
+        <div class="career-row"><span>Accenture Leadership</span><span class="metric">Managing Director</span><span class="metric">46%</span></div>
+        <div class="career-row"><span>Senior Manager</span><span class="metric">6</span><span class="metric">74.4%</span></div>
+        <div class="career-row"><span>Associate Director</span><span class="metric">5</span><span class="metric">73.6%</span></div>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    document.querySelectorAll('.group-button').forEach((button) => {
+      button.addEventListener('click', () => {
+        const expanded = button.getAttribute('aria-expanded') === 'true';
+        const target = document.getElementById(button.getAttribute('aria-controls'));
+        button.setAttribute('aria-expanded', String(!expanded));
+        target.hidden = expanded;
+      });
+    });
+  </script>
+</body>
+</html>
