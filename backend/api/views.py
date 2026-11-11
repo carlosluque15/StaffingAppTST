@@ -1,4 +1,5 @@
 import calendar
+import csv
 import json
 import re
 from datetime import date, timedelta
@@ -16,7 +17,6 @@ from django.utils import timezone
 from . import availability
 from .models import Assignment, CareerLevel, CatalogValue, Demand, DemandCandidate, Staff
 from .search import (
-    AVAILABILITY_DAYS,
     STAGES,
     OfferingMappingMissing,
     search_candidates,
@@ -29,7 +29,6 @@ DEMAND_FIELDS = {
     "role": "role",
     "industry": "industry",
     "offering": "offering",
-    "availability": "availability",
     "occupancy": "occupancy",
     "skills": "skills",
     "seniority": "seniority",
@@ -108,7 +107,6 @@ def _demand_data(demand):
         "role": demand.role,
         "industry": demand.industry,
         "offering": demand.offering,
-        "availability": demand.availability,
         "occupancy": demand.occupancy,
         "skills": demand.skills,
         "seniority": demand.seniority,
@@ -168,7 +166,7 @@ def _apply_demand_payload(demand, payload, *, partial):
         )
 
     missing_fields = [
-        field for field in ("title", "role", "industry", "offering", "location", "startDate", "skills")
+        field for field in ("title", "industry", "offering", "location", "startDate")
         if not partial and not payload.get(field)
     ]
     if missing_fields:
@@ -213,18 +211,6 @@ def _apply_demand_payload(demand, payload, *, partial):
             status=400,
         )
 
-    if "availability" in payload:
-        label = payload["availability"].strip().casefold()
-        if label != FLEXIBLE and label not in AVAILABILITY_DAYS:
-            return JsonResponse(
-                {
-                    "error": "Unsupported availability.",
-                    "fields": {"availability": [
-                        "Use one of: Inmediata, 2 semanas, 1 mes, 3 meses, Flexible."
-                    ]},
-                },
-                status=400,
-            )
     if "occupancy" in payload:
         text = payload["occupancy"].strip().removesuffix("%")
         if payload["occupancy"].strip().casefold() != FLEXIBLE and not (
@@ -287,18 +273,70 @@ def talent(request):
     people = list(Staff.objects.filter(is_deleted=False).exclude(accenture_id=""))
     on_date = timezone.localdate()
     grouped = availability.assignments_by_resource([s.accenture_id for s in people])
+    with_data = availability.resources_with_any_assignment(
+        [s.accenture_id for s in people]
+    )
+    thresholds = {
+        level.name.casefold(): float(level.unavailable_at_percent)
+        for level in CareerLevel.objects.all()
+    }
     data = []
     for staff in people:
         info = availability.occupancy(
             staff, on_date, grouped.get(staff.accenture_id.casefold(), [])
         )
+        required = thresholds.get(staff.career_level_group.strip().casefold())
+        assigned = info["assignedPercent"]
+        meets = None if required is None or assigned is None else assigned >= required
         data.append({
             **_candidate_data(staff),
             "capacityPercent": info["capacityPercent"],
             "assignedPercent": info["assignedPercent"],
             "availablePercent": info["availablePercent"],
+            "assignmentDataKnown": staff.accenture_id.casefold() in with_data,
+            "requiredPercent": required,
+            "meetsRequired": meets,
         })
     return JsonResponse({"talent": data})
+
+
+@require_http_methods(["GET"])
+def assignments(request):
+    """Assignment rows linked to their person; grouping is done by the client."""
+    scope = request.GET.get("scope", "active")
+    if scope not in ("active", "all"):
+        return JsonResponse({"error": "scope must be active or all."}, status=400)
+    on_date = timezone.localdate()
+    people = {
+        s.accenture_id.casefold(): s
+        for s in Staff.objects.exclude(accenture_id="")
+    }
+    data = []
+    for row in Assignment.objects.order_by("starting_on", "source_id"):
+        active = availability.is_active_on(row, on_date)
+        if scope == "active" and not active:
+            continue
+        person = people.get(row.resource.casefold())
+        deleted = bool(person and person.is_deleted)
+        if scope == "active" and deleted:
+            continue
+        data.append({
+            "id": row.source_id,
+            "resource": row.resource,
+            "personName": person.name if person else "",
+            "careerLevel": person.career_level_group.strip() if person else "",
+            "personDeleted": deleted,
+            "project": row.project_name,
+            "client": row.client,
+            "industry": row.industry or (person.industry if person else ""),
+            "startingOn": row.starting_on.isoformat() if row.starting_on else None,
+            "finishingOn": row.finishing_on.isoformat() if row.finishing_on else None,
+            "assignmentPercent": row.assignment_percent,
+            "sold": row.sold,
+            "confirmedEnd": row.confirmed_end,
+            "active": active,
+        })
+    return JsonResponse({"assignments": data})
 
 
 @csrf_exempt
@@ -843,6 +881,9 @@ def mentor_mentees(request, mentor_id):
         return JsonResponse({"error": "Mentor not found."}, status=404)
     on_date = timezone.localdate()
     grouped = availability.assignments_by_resource([s.accenture_id for s in mentees])
+    with_data = availability.resources_with_any_assignment(
+        [s.accenture_id for s in mentees]
+    )
     data = []
     for staff in mentees:
         assignments = grouped.get(staff.accenture_id.casefold(), [])
@@ -852,6 +893,7 @@ def mentor_mentees(request, mentor_id):
             "capacityPercent": info["capacityPercent"],
             "assignedPercent": info["assignedPercent"],
             "availablePercent": info["availablePercent"],
+            "assignmentDataKnown": staff.accenture_id.casefold() in with_data,
             "assignments": [
                 {
                     "id": a.source_id,
@@ -876,3 +918,46 @@ def mentor_mentees(request, mentor_id):
         "referenceDate": on_date.isoformat(),
         "mentees": data,
     })
+
+
+def _csv_cell(value):
+    """Neutralise spreadsheet formulas, leaving pure numbers untouched."""
+    if value is None:
+        return ""
+    text = value if isinstance(value, str) else str(value)
+    if text and text[0] in "=+-@":
+        try:
+            float(text.replace(",", "."))
+        except ValueError:
+            return "'" + text
+    return text
+
+
+def _csv_response(filename, queryset):
+    """Export ``source_data`` rows, reproducing the original CSV columns."""
+    headers = []
+    seen = set()
+    for data in queryset.values_list("source_data", flat=True).iterator():
+        for key in data:
+            if key not in seen:
+                seen.add(key)
+                headers.append(key)
+
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response.write("\ufeff")
+    writer = csv.writer(response)
+    writer.writerow(headers)
+    for data in queryset.values_list("source_data", flat=True).iterator():
+        writer.writerow([_csv_cell(data.get(header)) for header in headers])
+    return response
+
+
+@require_http_methods(["GET"])
+def export_staff(request):
+    return _csv_response("staff.csv", Staff.objects.order_by("source_row"))
+
+
+@require_http_methods(["GET"])
+def export_assignments(request):
+    return _csv_response("assignments.csv", Assignment.objects.order_by("id"))

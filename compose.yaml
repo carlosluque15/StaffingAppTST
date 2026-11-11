@@ -18,7 +18,7 @@ services:
     build:
       context: ./backend
     container_name: staffing-backend
-    command: ["sh", "-c", "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"]
+    command: ["sh", "-c", "python manage.py migrate && if [ -f /imports/Staff.csv ] && [ -f /imports/Assignments.csv ]; then python manage.py import_staffing_csvs --staff-csv /imports/Staff.csv --assignments-csv /imports/Assignments.csv --replace || echo 'IMPORTACION FALLIDA: se conservan los datos anteriores'; else echo 'CSV no encontrados: se omite la importacion'; fi; python manage.py runserver 0.0.0.0:8000"]
     ports:
       - "8000:8000"
       - "5432:5432"

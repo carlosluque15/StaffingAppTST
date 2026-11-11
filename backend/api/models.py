@@ -63,7 +63,7 @@ class CatalogValue(models.Model):
 
     class Kind(models.TextChoices):
         INDUSTRY = "industry", "Industria"
-        AREA = "area", "Área / offering"
+        AREA = "area", "Offering (Organization Unit)"
         LOCATION = "location", "Localización"
 
     kind = models.CharField(max_length=16, choices=Kind.choices)
@@ -136,12 +136,11 @@ class CriterionMapping(models.Model):
 class Demand(models.Model):
     code = models.CharField(max_length=32, primary_key=True)
     title = models.CharField(max_length=200)
-    role = models.CharField(max_length=160)
+    role = models.CharField(max_length=160, blank=True)
     industry = models.CharField(max_length=120)
     offering = models.CharField(max_length=120)
-    availability = models.CharField(max_length=120)
     occupancy = models.CharField(max_length=32)
-    skills = models.JSONField(default=list)
+    skills = models.JSONField(default=list, blank=True)
     seniority = models.CharField(max_length=80)
     location = models.CharField(max_length=120)
     modality = models.CharField(max_length=80)

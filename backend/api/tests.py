@@ -20,7 +20,6 @@ class StaffingApiTests(TestCase):
             role="Data Engineer",
             industry="Banca",
             offering="Data & AI",
-            availability="Inmediata",
             occupancy="100%",
             skills=["Python"],
             seniority="Senior",
@@ -75,7 +74,6 @@ class StaffingApiTests(TestCase):
             role="Data Engineer",
             industry="Banca",
             offering="Data & AI",
-            availability="Inmediata",
             occupancy="100%",
             skills=["Python"],
             seniority="Senior",
@@ -97,12 +95,11 @@ class StaffingApiTests(TestCase):
             "title": "Data Engineer para banca",
             "role": "Data Engineer",
             "industry": "Financial Services",
-            "offering": "Technology Strategy",
+            "offering": "Digital Foundations",
             "location": "Madrid",
             "startDate": "2026-12-01",
             "skills": ["Python", "SQL"],
             "seniority": "Manager",
-            "availability": "Inmediata",
             "occupancy": "100%",
             "modality": "Híbrido",
             "duration": "6 meses",
@@ -225,6 +222,8 @@ def post_json(client, url, payload):
 class SearchAndSelectionTests(TestCase):
     """Staged search, capacity rules and persisted selections (synthetic data)."""
 
+    OU = "Technology Transformation Delivery"
+
     def setUp(self):
         self.today = timezone.localdate()
         self.demand = Demand.objects.create(
@@ -232,24 +231,27 @@ class SearchAndSelectionTests(TestCase):
             title="Demand",
             role="Role",
             industry="Financial Services",
-            offering="Transformation Excellence",
-            availability="Inmediata",
+            offering="Technology Transformation Delivery",
             occupancy="50%",
             skills=["x"],
             seniority="Consultant",
             location="Madrid",
             modality="Híbrido",
-            start_date="2026-12-01",
+            start_date=timezone.localdate(),
             duration="6 meses",
         )
         self.row = 0
         # Catalog, levels and offering mappings come from migration 0006.
-        self.in_offering = self.make_staff("A-IN", role="Transformation Excellence Consultant")
-        self.other = self.make_staff("A-OUT", role="Technology Strategy Consultant")
+        self.in_offering = self.make_staff("A-IN", organization_unit=self.OU)
+        self.other = self.make_staff("A-OUT", organization_unit="Digital Foundations")
         self.deleted = self.make_staff(
-            "A-DEL", role="Transformation Excellence Consultant", is_deleted=True
+            "A-DEL", organization_unit=self.OU, is_deleted=True
         )
-        self.unassigned = self.make_staff("A-NONE", role="Empty")
+        # Analyst of another Organization Unit -> Bolsa transversal.
+        self.analyst = self.make_staff(
+            "A-NONE", organization_unit="Digital Foundations",
+            career_level_group="Analyst",
+        )
 
     def make_staff(self, accenture_id, role="", **extra):
         self.row += 1
@@ -288,7 +290,7 @@ class SearchAndSelectionTests(TestCase):
     def ids(self, response):
         return [item["id"] for item in response.json()["candidates"]]
 
-    def test_stages_are_disjoint_and_unassigned_go_to_transversal_pool(self):
+    def test_stages_are_disjoint_and_other_unit_analysts_go_to_transversal_pool(self):
         first = self.search("initial").json()
         second = self.search("expanded").json()
 
@@ -304,6 +306,32 @@ class SearchAndSelectionTests(TestCase):
         )
         self.assertNotIn("A-DEL", everyone)
         self.assertEqual(len(everyone), len(set(everyone)))
+
+    def test_transversal_analyst_ignores_demand_seniority_and_capacity_applies(self):
+        self.demand.seniority = "Manager"
+        self.demand.save()
+        self.assertEqual(
+            [c["id"] for c in self.search().json()["transversal"]["candidates"]],
+            ["A-NONE"],
+        )
+        self.assign(self.analyst, 80)
+        self.assertEqual(self.search().json()["transversal"]["candidates"], [])
+        # An analyst of the demand unit is initial, never transversal.
+        self.make_staff("A-OWN", organization_unit=self.OU, career_level_group="Analyst")
+        data = self.search("expanded").json()
+        self.assertNotIn("A-OWN", [c["id"] for c in data["transversal"]["candidates"]])
+
+    def test_demand_role_is_optional(self):
+        payload = {
+            "title": "T", "industry": "Financial Services",
+            "offering": "Digital Foundations", "location": "Madrid",
+            "startDate": "2026-12-01", "skills": ["x"], "seniority": "Manager",
+            "occupancy": "100%",
+            "modality": "Remoto", "duration": "6 meses",
+        }
+        response = post_json(self.client, reverse("demands"), payload)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["role"], "")
 
     def test_search_blocked_without_offering_mapping(self):
         CriterionMapping.objects.all().delete()
@@ -367,7 +395,7 @@ class SearchAndSelectionTests(TestCase):
         self.assign(self.in_offering, 100, days_left=20)
 
         self.assertEqual(self.ids(self.search()), [])
-        self.demand.availability = "1 mes"
+        self.demand.start_date = self.today + timedelta(days=30)
         self.demand.save()
         self.assertEqual(self.ids(self.search()), ["A-IN"])
 
@@ -411,17 +439,31 @@ class SearchAndSelectionTests(TestCase):
         self.demand.industry = "Financial Services"
         self.demand.save()
         self.in_offering.save()
-        self.assertEqual(self.ids(self.search()), [])
-        self.assign(self.in_offering, 10, industry="Financial Services")
+        # No known industry: kept and flagged, not excluded.
         self.assertEqual(self.ids(self.search()), ["A-IN"])
+        self.assertFalse(self.search().json()["candidates"][0]["industryKnown"])
+        self.assign(self.in_offering, 10, industry="Resources")
+        self.assertEqual(self.ids(self.search()), [])
+        self.assertEqual(self.search().json()["excluded"], {"industry": 1})
+        self.in_offering.industry = "Financial Services"
+        self.in_offering.save()
+        self.assertEqual(self.ids(self.search()), ["A-IN"])
+        self.assertTrue(self.search().json()["candidates"][0]["industryKnown"])
+
+    def test_candidate_without_any_assignment_is_flagged(self):
+        candidate = self.search().json()["candidates"][0]
+        self.assertFalse(candidate["assignmentDataKnown"])
+        self.assertEqual(candidate["assignedPercent"], 0)
+        self.assign(self.in_offering, 10)
+        candidate = self.search().json()["candidates"][0]
+        self.assertTrue(candidate["assignmentDataKnown"])
 
     def test_catalog_endpoint_lists_levels_with_thresholds(self):
         data = self.client.get(reverse("catalog")).json()
 
         self.assertIn("Financial Services", data["industries"])
-        self.assertEqual(data["areas"], [
-            "Enterprise Architecture", "Technology Strategy", "Transformation Excellence",
-        ])
+        self.assertIn("Digital Foundations", data["areas"])
+        self.assertIn("Technology Strategy & Transformation", data["areas"])
         self.assertEqual([x["value"] for x in data["locations"]], ["Madrid", "Barcelona", "Bilbao"])
         thresholds = {x["name"]: x["unavailableAtPercent"] for x in data["levels"]}
         self.assertEqual(thresholds["Manager"], 85.6)
@@ -477,7 +519,7 @@ class SearchAndSelectionTests(TestCase):
 
     def test_select_blocked_without_mapping_and_ambiguous_ids(self):
         url = reverse("demand-candidates", args=[self.demand.code])
-        self.make_staff("A-IN", role="Technology Strategy Consultant")
+        self.make_staff("A-IN", organization_unit="Digital Foundations")
         self.assertEqual(post_json(self.client, url, {"staffId": "A-IN"}).status_code, 409)
 
         CriterionMapping.objects.all().delete()
@@ -524,17 +566,16 @@ class SearchAndSelectionTests(TestCase):
     def test_demand_validation_for_dates_availability_and_occupancy(self):
         base = {
             "title": "T", "role": "R", "industry": "Financial Services",
-            "offering": "Technology Strategy",
+            "offering": "Digital Foundations",
             "location": "Madrid", "startDate": "2026-12-01", "skills": ["x"],
-            "seniority": "Manager", "availability": "Inmediata", "occupancy": "100%",
+            "seniority": "Manager", "occupancy": "100%",
             "modality": "Remoto", "duration": "6 meses",
         }
         for override in (
             {"startDate": "2026-13-45"},
-            {"availability": "mañana"},
             {"occupancy": "150%"},
             {"occupancy": "abc"},
-            {"skills": []},
+            {"skills": "Python"},
             {"industry": "Banca"},
             {"offering": "Data & AI"},
             {"seniority": "Senior"},
@@ -545,6 +586,17 @@ class SearchAndSelectionTests(TestCase):
                 self.assertEqual(response.status_code, 400)
         ok = post_json(self.client, reverse("demands"), {**base, "occupancy": "Flexible"})
         self.assertEqual(ok.status_code, 201)
+
+    def test_demand_can_be_created_without_skills(self):
+        payload = {
+            "title": "T", "role": "R", "industry": "Financial Services",
+            "offering": "Digital Foundations", "location": "Madrid",
+            "startDate": "2026-12-01", "seniority": "Manager",
+            "occupancy": "100%", "modality": "Remoto", "duration": "6 meses",
+        }
+        response = post_json(self.client, reverse("demands"), payload)
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["skills"], [])
 
     def test_demand_detail_get_and_not_found(self):
         self.assertEqual(
@@ -667,23 +719,43 @@ class CsvImportTests(TestCase):
         )
 
 
-    def test_rejects_duplicate_ids_among_active_staff(self):
+    def _import(self, staff_text):
+        from io import StringIO
+
+        err = StringIO()
         with tempfile.TemporaryDirectory() as directory:
             staff_csv = Path(directory) / "Staff.csv"
             assignments_csv = Path(directory) / "Assignments.csv"
-            staff_csv.write_text("Accenture Id,isDeletedText\nA-1,no\nA-1,no\n")
+            staff_csv.write_text(staff_text)
             assignments_csv.write_text(
                 "ID,Sold,Starting Date,Finishing Date,Confirmed end\n"
             )
+            call_command(
+                "import_staffing_csvs",
+                staff_csv=str(staff_csv),
+                assignments_csv=str(assignments_csv),
+                stdout=StringIO(),
+                stderr=err,
+            )
+        return err.getvalue()
 
-            with self.assertRaises(CommandError):
-                call_command(
-                    "import_staffing_csvs",
-                    staff_csv=str(staff_csv),
-                    assignments_csv=str(assignments_csv),
-                )
-        self.assertEqual(Staff.objects.count(), 0)
+    def test_duplicate_active_ids_import_one_row_with_warning(self):
+        warnings = self._import(
+            "Accenture Id,Surname,Role,isDeletedText\n"
+            "A-1,Russo Bertolez,Analyst,no\n"
+            "a-1,Russo,,no\n"
+        )
+        self.assertEqual(Staff.objects.count(), 1)
+        # Most filled columns wins.
+        self.assertEqual(Staff.objects.get().surname, "Russo Bertolez")
+        self.assertIn("duplicado", warnings)
 
+    def test_active_staff_without_id_is_skipped_with_warning(self):
+        warnings = self._import(
+            "Accenture Id,Surname,isDeletedText\n,Nobody,no\nA-2,Ok,no\n"
+        )
+        self.assertEqual(list(Staff.objects.values_list("accenture_id", flat=True)), ["A-2"])
+        self.assertIn("sin Accenture Id", warnings)
 
 
 class AvailabilityTests(SearchAndSelectionTests):
@@ -742,7 +814,7 @@ class AvailabilityTests(SearchAndSelectionTests):
         self.assertEqual(
             self.occ(self.in_offering, self.today + timedelta(days=90))["availablePercent"], 0
         )
-        self.demand.availability = "3 meses"
+        self.demand.start_date = self.today + timedelta(days=90)
         self.demand.save()
         self.assertEqual(self.ids(self.search()), [])
 
@@ -912,6 +984,13 @@ class MentorTests(TestCase):
         self.assertEqual(data["_none"]["menteeCount"], 2)
         mentees = self.client.get(reverse("mentor-mentees", args=["boss.one"])).json()["mentees"]
         self.assertEqual(sorted(m["id"] for m in mentees), ["a", "b"])
+        self.assertTrue(all(m["assignmentDataKnown"] is False for m in mentees))
+        Assignment.objects.create(
+            source_id="as-a", resource="A", assignment_percent=50,
+            sold="True", confirmed_end="False",
+        )
+        mentees = self.client.get(reverse("mentor-mentees", args=["boss.one"])).json()["mentees"]
+        self.assertEqual({m["id"]: m["assignmentDataKnown"] for m in mentees}, {"a": True, "b": False})
         none = self.client.get(reverse("mentor-mentees", args=["_none"])).json()
         self.assertEqual(sorted(m["id"] for m in none["mentees"]), ["boss.one", "e"])
         self.assertEqual(
@@ -944,3 +1023,115 @@ class TalentTests(TestCase):
         self.assertEqual(by_id["busy"]["availablePercent"], 60)
         self.assertEqual(by_id["busy"]["assignedPercent"], 40)
         self.assertEqual(by_id["free"]["availablePercent"], 100)
+        self.assertTrue(by_id["busy"]["assignmentDataKnown"])
+        self.assertFalse(by_id["free"]["assignmentDataKnown"])
+
+    def test_talent_required_percent_by_level(self):
+        from .models import CareerLevel
+        CareerLevel.objects.update_or_create(name="Analyst", defaults={"rank": 1, "unavailable_at_percent": 100})
+        CareerLevel.objects.update_or_create(name="Manager", defaults={"rank": 2, "unavailable_at_percent": "85.6"})
+        today = timezone.localdate()
+        for aid, level, pct in [("an", "Analyst", 100), ("mg", "Manager", 50), ("xx", "Otro", 10)]:
+            person = self.person(aid)
+            person.career_level_group = level
+            person.save()
+            Assignment.objects.create(
+                source_id=f"as-{aid}", resource=aid, assignment_percent=pct,
+                starting_on=today - timedelta(days=5), finishing_on=today + timedelta(days=5),
+                sold="True", confirmed_end="False",
+            )
+        by_id = {p["id"]: p for p in self.client.get(reverse("talent")).json()["talent"]}
+        self.assertEqual(by_id["an"]["requiredPercent"], 100)
+        self.assertTrue(by_id["an"]["meetsRequired"])
+        self.assertEqual(by_id["mg"]["requiredPercent"], 85.6)
+        self.assertFalse(by_id["mg"]["meetsRequired"])
+        self.assertIsNone(by_id["xx"]["requiredPercent"])
+        self.assertIsNone(by_id["xx"]["meetsRequired"])
+
+
+class ReportTests(TestCase):
+    def setUp(self):
+        Staff.objects.create(source_row=1, name="Ana", source_data={"Name": "Ana", "Role": "Analista, Sr", "isDeletedText": "No"})
+        Staff.objects.create(source_row=2, is_deleted=True, source_data={"Name": "José", "Role": "=cmd()", "isDeletedText": "Yes"})
+        Assignment.objects.create(source_id="1", source_data={"ID": "1", "Pct": "-50"})
+        Assignment.objects.create(source_id="2", source_data={"ID": "2", "Pct": "100%"})
+
+    def test_staff_export(self):
+        response = self.client.get(reverse("report-staff"))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response["Content-Type"].startswith("text/csv"))
+        self.assertIn("staff.csv", response["Content-Disposition"])
+        text = response.content.decode("utf-8-sig")
+        rows = list(csv.reader(text.splitlines()))
+        self.assertEqual(rows[0], ["Name", "Role", "isDeletedText"])
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[1][1], "Analista, Sr")
+        self.assertEqual(rows[2][0], "José")
+        self.assertEqual(rows[2][1], "'=cmd()")
+
+    def test_assignments_export(self):
+        response = self.client.get(reverse("report-assignments"))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("assignments.csv", response["Content-Disposition"])
+        rows = list(csv.reader(response.content.decode("utf-8-sig").splitlines()))
+        self.assertEqual(rows[0], ["ID", "Pct"])
+        self.assertEqual([row[1] for row in rows[1:]], ["-50", "100%"])
+
+
+class AssignmentsViewTests(TestCase):
+    def setUp(self):
+        self.today = timezone.localdate()
+        self.n = 2000
+
+    def person(self, aid, level="Manager", industry="", deleted=False):
+        self.n += 1
+        return Staff.objects.create(
+            source_row=self.n, accenture_id=aid, name=aid, is_deleted=deleted,
+            career_level_group=level, industry=industry,
+        )
+
+    def assign(self, sid, resource, start=-5, end=5, sold="True", confirmed="False", **extra):
+        return Assignment.objects.create(
+            source_id=sid, resource=resource, assignment_percent=50, sold=sold,
+            confirmed_end=confirmed,
+            starting_on=self.today + timedelta(days=start),
+            finishing_on=self.today + timedelta(days=end), **extra,
+        )
+
+    def get(self, scope=None):
+        url = reverse("assignments") + (f"?scope={scope}" if scope else "")
+        return {a["id"]: a for a in self.client.get(url).json()["assignments"]}
+
+    def test_active_excludes_ended_unsold_confirmed_and_deleted(self):
+        self.person("ok")
+        self.person("gone", deleted=True)
+        self.assign("a-ok", "ok")
+        self.assign("a-old", "ok", start=-20, end=-10)
+        self.assign("a-unsold", "ok", sold="False")
+        self.assign("a-conf", "ok", confirmed="True")
+        self.assign("a-gone", "gone")
+        self.assertEqual(list(self.get()), ["a-ok"])
+
+    def test_all_includes_everything_with_flags(self):
+        self.person("gone", deleted=True)
+        self.assign("a-gone", "gone")
+        self.assign("a-old", "gone", start=-20, end=-10)
+        rows = self.get("all")
+        self.assertEqual(sorted(rows), ["a-gone", "a-old"])
+        self.assertTrue(rows["a-gone"]["personDeleted"])
+        self.assertTrue(rows["a-gone"]["active"])
+        self.assertFalse(rows["a-old"]["active"])
+
+    def test_level_industry_fallback_and_case_insensitive_join(self):
+        self.person("AbC", level="Analyst", industry="Banca")
+        self.assign("a1", "abc")
+        self.assign("a2", "abc", industry="Energía")
+        self.assign("a3", "nobody")
+        rows = self.get()
+        self.assertEqual(rows["a1"]["careerLevel"], "Analyst")
+        self.assertEqual(rows["a1"]["industry"], "Banca")
+        self.assertEqual(rows["a2"]["industry"], "Energía")
+        self.assertEqual(rows["a3"]["careerLevel"], "")
+
+    def test_invalid_scope(self):
+        self.assertEqual(self.client.get(reverse("assignments") + "?scope=x").status_code, 400)

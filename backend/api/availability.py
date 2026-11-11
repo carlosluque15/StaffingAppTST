@@ -66,6 +66,21 @@ def assignments_by_resource(accenture_ids):
     return grouped
 
 
+def resources_with_any_assignment(accenture_ids):
+    """Lowercase ids that have at least one assignment row of any kind.
+
+    Someone absent from this set has no assignment data at all, so a
+    0% occupancy means "unknown", not "free".
+    """
+    keys = {value.casefold() for value in accenture_ids if value}
+    return set(
+        Assignment.objects.annotate(resource_key=Lower("resource"))
+        .filter(resource_key__in=keys)
+        .values_list("resource_key", flat=True)
+        .distinct()
+    )
+
+
 def _sum_percent(assignments):
     percents = [item.assignment_percent for item in assignments]
     return None if any(p is None for p in percents) else sum(percents)

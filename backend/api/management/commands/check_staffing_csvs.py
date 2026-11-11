@@ -19,11 +19,14 @@ class Command(BaseCommand):
         reader = ImportCommand()
         staff_rows = reader._read_csv(options["staff_csv"], ("Accenture Id", "isDeletedText"))
         assignment_rows = reader._read_csv(options["assignments_csv"], ("ID",))
+        staff_rows, discarded = reader.dedupe_staff(staff_rows)
+        for message in discarded:
+            self.stdout.write(f"Duplicado esperado: {message}")
         problems = 0
 
         db_staff = {s.source_row: s for s in Staff.objects.all()}
         problems += self._report("Staff rows", len(staff_rows), len(db_staff))
-        for number, row in enumerate(staff_rows, start=1):
+        for number, row in staff_rows:
             obj = db_staff.get(number)
             if obj is None:
                 continue

@@ -4,7 +4,7 @@ from datetime import datetime
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from api.models import Assignment, Staff
+from api.models import Assignment, CatalogValue, CriterionMapping, Staff
 
 
 STAFF_FIELDS = {
@@ -61,7 +61,9 @@ class Command(BaseCommand):
             options["assignments_csv"],
             ("ID", "Sold", "Starting Date", "Finishing Date", "Confirmed end"),
         )
-        self._check_unique_active_staff_ids(staff_rows)
+        staff_rows, discarded = self.dedupe_staff(staff_rows)
+        for message in discarded:
+            self.stderr.write(f"AVISO: {message}")
 
         with transaction.atomic():
             if options["replace"]:
@@ -70,11 +72,13 @@ class Command(BaseCommand):
 
             staff_created, deleted_staff = self._import_staff(staff_rows)
             assignments_created = self._import_assignments(assignment_rows)
+            self._sync_offerings()
 
         self.stdout.write(
             self.style.SUCCESS(
                 f"Imported {len(staff_rows)} staff rows "
                 f"({staff_created} new, {deleted_staff} marked as deleted); "
+                f"{len(discarded)} duplicados descartados; "
                 f"imported {len(assignment_rows)} assignments "
                 f"({assignments_created} new)."
             )
@@ -98,31 +102,54 @@ class Command(BaseCommand):
             raise CommandError(f"{path} contains a row with more values than headers.")
         return rows
 
-    def _check_unique_active_staff_ids(self, rows):
-        seen = set()
+    def dedupe_staff(self, rows):
+        """Return ``([(source_row, row)], warnings)`` with unique active ids.
+
+        Active rows without ``Accenture Id`` are skipped. For repeated ids
+        (case-insensitive) the row with most filled columns wins, the last one
+        on a tie. Deleted rows are always kept. ``source_row`` is the 1-based
+        position in the CSV, so it stays stable.
+        """
+        kept = []
+        by_id = {}
+        warnings = []
         for source_row, row in enumerate(rows, start=1):
-            accenture_id = self._value(row, "Accenture Id").casefold()
             is_deleted = self._parse_bool(
                 self._value(row, "isDeletedText"),
                 f"Staff.csv row {source_row}: isDeletedText",
             )
             if is_deleted:
+                kept.append((source_row, row))
                 continue
-            if not accenture_id:
-                raise CommandError(
-                    f"Staff.csv row {source_row}: active staff without Accenture Id."
+            key = self._value(row, "Accenture Id").casefold()
+            if not key:
+                warnings.append(
+                    f"Staff.csv fila {source_row}: activo sin Accenture Id, se omite."
                 )
-            if accenture_id in seen:
-                raise CommandError(
-                    f"Staff.csv row {source_row}: duplicate Accenture Id among "
-                    "active staff; it is the stable candidate identifier."
+                continue
+            by_id.setdefault(key, []).append((source_row, row))
+        for key, group in by_id.items():
+            winner = max(
+                group, key=lambda item: (self._filled(item[1]), item[0])
+            )
+            kept.append(winner)
+            if len(group) > 1:
+                dropped = [str(n) for n, _ in group if n != winner[0]]
+                warnings.append(
+                    f"Accenture Id duplicado {key!r}: se conserva la fila "
+                    f"{winner[0]}, se descartan las filas {', '.join(dropped)}."
                 )
-            seen.add(accenture_id)
+        kept.sort(key=lambda item: item[0])
+        return kept, warnings
+
+    @classmethod
+    def _filled(cls, row):
+        return sum(1 for value in row.values() if (value or "").strip())
 
     def _import_staff(self, rows):
         created = 0
         deleted_count = 0
-        for source_row, row in enumerate(rows, start=1):
+        for source_row, row in rows:
             accenture_id = self._value(row, "Accenture Id")
             is_deleted = self._parse_bool(
                 self._value(row, "isDeletedText"),
@@ -145,6 +172,23 @@ class Command(BaseCommand):
             )
             created += was_created
         return created, deleted_count
+
+    def _sync_offerings(self):
+        """Offering catalog = distinct Organization Units of active staff."""
+        units = (
+            Staff.objects.filter(is_deleted=False)
+            .exclude(organization_unit="")
+            .values_list("organization_unit", flat=True)
+            .distinct()
+        )
+        for unit in units:
+            CatalogValue.objects.get_or_create(kind="area", value=unit)
+            CriterionMapping.objects.get_or_create(
+                criterion="offering",
+                demand_value=unit,
+                staff_field=CriterionMapping.StaffField.ORGANIZATION_UNIT,
+                staff_value=unit,
+            )
 
     def _import_assignments(self, rows):
         created = 0

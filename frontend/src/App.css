@@ -1101,6 +1101,15 @@
   background: #a100ff;
 }
 
+.status-pill.pending {
+  color: #8a5a00;
+  background: #fff4de;
+}
+
+.status-pill.pending i {
+  background: #e29a00;
+}
+
 .row-arrow {
   display: grid;
   width: 26px;
@@ -2523,3 +2532,31 @@
 .talent-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 16px 0; }
 .talent-table .clickable-row { cursor: pointer; }
 .talent-table .clickable-row:hover { background: #f5f0ff; }
+
+.occupancy-cell { display: flex; flex-direction: column; gap: 2px; min-width: 110px; }
+.occupancy-cell small { color: #6b6b7b; }
+.occupancy-bar { display: block; height: 4px; border-radius: 2px; background: #e6e3ee; overflow: hidden; }
+.occupancy-bar > span { display: block; height: 100%; background: #a100ff; }
+.occupancy-bar > .occupancy-over { background: #d9534f; }
+
+.reports-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-top: 16px; }
+.report-card { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; padding: 20px; border: 1px solid #e6e3ee; border-radius: 12px; background: #fff; }
+.report-card h2 { margin: 0; font-size: 18px; }
+.report-card p { margin: 0; color: #6b6b7b; flex: 1; }
+
+.form-note {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: #6b6b7b;
+  font-style: italic;
+}
+
+.data-warning {
+  color: #9a5b00;
+}
+
+.mode-tabs { display: flex; gap: 4px; align-items: end; flex-wrap: wrap; grid-column: 1 / -1; }
+.mode-tabs button { border: 1px solid #e6e3ee; background: #fff; padding: 8px 14px; border-radius: 8px; cursor: pointer; font: inherit; }
+.mode-tabs button.active { background: #a100ff; border-color: #a100ff; color: #fff; }
+.group-row[aria-expanded="true"] { background: #f5f0ff; }
+.group-detail > td { background: #faf8ff; padding: 8px 16px; }

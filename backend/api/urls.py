@@ -1,5 +1,6 @@
 from django.urls import path
 from .views import (
+    assignments,
     catalog,
     candidates,
     complete_demand,
@@ -8,6 +9,8 @@ from .views import (
     demand_detail,
     demand_search,
     demands,
+    export_assignments,
+    export_staff,
     health_check,
     mentor_mentees,
     mentors,
@@ -23,6 +26,9 @@ urlpatterns = [
     path("talent/", talent, name="talent"),
     path("mentors/", mentors, name="mentors"),
     path("mentors/<str:mentor_id>/mentees/", mentor_mentees, name="mentor-mentees"),
+    path("assignments/", assignments, name="assignments"),
+    path("reports/staff.csv", export_staff, name="report-staff"),
+    path("reports/assignments.csv", export_assignments, name="report-assignments"),
     path("demands/", demands, name="demands"),
     path("demands/<str:code>/", demand_detail, name="demand-detail"),
     path("demands/<str:code>/search/", demand_search, name="demand-search"),

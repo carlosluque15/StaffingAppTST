@@ -7,6 +7,8 @@ const navigation = [
   { id: "demands", label: "Demandas", icon: "briefcase" },
   { id: "talent", label: "Talento", icon: "users" },
   { id: "mentors", label: "Mentores", icon: "users" },
+  { id: "assignments", label: "Asignaciones", icon: "briefcase" },
+  { id: "reports", label: "Informes", icon: "file" },
 ];
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -40,6 +42,7 @@ function Icon({ name, size = 20 }) {
     home: <><path d="m3 10 9-7 9 7" /><path d="M5 9v11h14V9M9 20v-6h6v6" /></>,
     briefcase: <><rect x="3" y="7" width="18" height="14" rx="2" /><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18M10 12v2h4v-2" /></>,
     users: <><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="10" cy="7" r="4" /><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
+    file: <><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6M8 13h8M8 17h8" /></>,
     search: <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></>,
     plus: <><path d="M12 5v14M5 12h14" /></>,
     arrow: <><path d="M5 12h14M13 6l6 6-6 6" /></>,
@@ -76,7 +79,7 @@ function Brand({ compact = false }) {
       <img className="brand-logo" src={accentureLogo} alt="" />
       {!compact && (
         <span className="brand-name">
-          accenture<span>staffing</span>
+          accenture<span>TST staffing</span>
         </span>
       )}
     </div>
@@ -125,7 +128,7 @@ function Sidebar({ page, setPage, demandCount }) {
 function Topbar({ title, onNewDemand }) {
   return (
     <header className="topbar">
-      <div className="breadcrumb"><span>Staffing workspace</span><Icon name="chevron" size={15} /><strong>{title}</strong></div>
+      <div className="breadcrumb"><span title="Tech Strategy & Transformation">TST · Tech Strategy & Transformation</span><Icon name="chevron" size={15} /><strong>{title}</strong></div>
       <div className="topbar-actions">
         <span className="demo-pill"><i /> Acceso sin inicio de sesión</span>
         <button className="button button-purple button-small" onClick={onNewDemand}>
@@ -208,7 +211,20 @@ function Dashboard({ demands, candidates, setPage, onNewDemand, onOpenDemand }) 
   );
 }
 
-function DemandTable({ demands, onOpenDemand }) {
+function DemandTable({ demands, onOpenDemand, onDelete }) {
+  const [deleteError, setDeleteError] = useState("");
+
+  async function handleDelete(event, demand) {
+    event.stopPropagation();
+    if (!window.confirm(`¿Eliminar la demanda ${demand.id} y sus candidatos seleccionados?`)) return;
+    setDeleteError("");
+    try {
+      await onDelete(demand.id);
+    } catch (requestError) {
+      setDeleteError(requestError.message);
+    }
+  }
+
   if (!demands.length) {
     return (
       <div className="empty-state">
@@ -221,15 +237,17 @@ function DemandTable({ demands, onOpenDemand }) {
 
   return (
     <div className="table-card">
+      {deleteError && <p className="form-error" role="alert">{deleteError}</p>}
       <div className="demand-table-wrap">
         <table className="demand-table">
-          <thead><tr><th>DEMANDA</th><th>LOCALIZACIÓN</th><th>FECHA DE INICIO</th><th>ESTADO</th><th /></tr></thead>
+          <thead><tr><th>DEMANDA</th><th>LOCALIZACIÓN</th><th>FECHA DE INICIO</th><th>ESTADO</th>{onDelete && <th />}<th /></tr></thead>
           <tbody>
             {demands.map((demand) => (
               <tr key={demand.id} onClick={() => onOpenDemand(demand)} tabIndex={0} onKeyDown={(event) => event.key === "Enter" && onOpenDemand(demand)}>
-                <td><span className="demand-mini-icon"><Icon name="briefcase" size={17} /></span><span className="demand-name"><strong>{demand.title}</strong><small>{demand.id} · {demand.role}</small></span></td>
+                <td><span className="demand-mini-icon"><Icon name="briefcase" size={17} /></span><span className="demand-name"><strong>{demand.title}</strong><small>{demand.id} · {demand.role || "Sin rol"}</small></span></td>
                 <td>{demand.location}</td><td>{formatDate(demand.startDate)}</td>
                 <td><span className="status-pill"><i />{demand.status}</span></td>
+                {onDelete && <td><button className="button button-outline" aria-label={`Eliminar ${demand.title}`} onClick={(event) => handleDelete(event, demand)}>Eliminar</button></td>}
                 <td><button className="row-arrow" aria-label={`Abrir ${demand.title}`}><Icon name="chevron" size={17} /></button></td>
               </tr>
             ))}
@@ -242,14 +260,12 @@ function DemandTable({ demands, onOpenDemand }) {
 
 function DemandForm({ catalog, onCancel, onSubmit, demand = null }) {
   const editing = Boolean(demand);
-  const [form, setForm] = useState(demand ? { ...demand, skills: demand.skills.join(", ") } : {
+  const [form, setForm] = useState(demand ? { ...demand } : {
     title: "",
     role: "",
-    skills: "",
     seniority: "",
     industry: "",
     offering: "",
-    availability: "Inmediata",
     occupancy: "100%",
     location: "",
     modality: "Híbrido",
@@ -266,21 +282,15 @@ function DemandForm({ catalog, onCancel, onSubmit, demand = null }) {
 
   async function submit(event) {
     event.preventDefault();
-    if (!form.title.trim() || !form.role.trim() || !form.seniority || !form.industry || !form.offering || !form.location || !form.startDate) {
-      setError("Completa el título, rol, nivel, industria, offering, localización y fecha de inicio.");
-      return;
-    }
-    if (!form.skills.trim()) {
-      setError("Añade al menos una habilidad para orientar la búsqueda.");
+    if (!form.title.trim() || !form.seniority || !form.industry || !form.offering || !form.location || !form.startDate) {
+      setError("Completa el título, nivel, industria, offering, localización y fecha de inicio.");
       return;
     }
     setError("");
     setSaving(true);
     try {
-      await onSubmit({
-        ...form,
-        skills: form.skills.split(",").map((skill) => skill.trim()).filter(Boolean),
-      });
+      // Skills are not editable until AI search lands; keep any existing ones untouched.
+      await onSubmit({ ...form });
     } catch (submitError) {
       setError(submitError.message);
     } finally {
@@ -298,19 +308,17 @@ function DemandForm({ catalog, onCancel, onSubmit, demand = null }) {
         <div className="form-section-heading"><span className="form-section-number">01</span><div><h2>Sobre la demanda</h2><p>Información general del rol y el proyecto.</p></div></div>
         <div className="form-grid">
           <label className="field field-full"><span>Nombre de la demanda <b>*</b></span><input value={form.title} onChange={(e) => update("title", e.target.value)} placeholder="Ej. Data Engineer para proyecto de banca" /></label>
-          <label className="field"><span>Rol o perfil <b>*</b></span><input value={form.role} onChange={(e) => update("role", e.target.value)} placeholder="Ej. Data Engineer" /></label>
+          <label className="field"><span>Rol o perfil</span><input value={form.role} onChange={(e) => update("role", e.target.value)} placeholder="Opcional · Ej. Data Engineer" /></label>
           <label className="field"><span>Nivel (career level) <b>*</b></span><select value={form.seniority} onChange={(e) => update("seniority", e.target.value)}><option value="">Selecciona un nivel</option>{catalog.levels.map((level) => <option key={level.name}>{level.name}</option>)}</select></label>
           <label className="field"><span>Industria <b>*</b></span><select value={form.industry} onChange={(e) => update("industry", e.target.value)}><option value="">Selecciona una industria</option>{catalog.industries.map((industry) => <option key={industry}>{industry}</option>)}</select></label>
-          <label className="field"><span>Área / offering <b>*</b></span><select value={form.offering} onChange={(e) => update("offering", e.target.value)}><option value="">Selecciona un offering</option>{catalog.areas.map((area) => <option key={area}>{area}</option>)}</select></label>
-          <label className="field"><span>Disponibilidad requerida</span><select value={form.availability} onChange={(e) => update("availability", e.target.value)}><option>Inmediata</option><option>2 semanas</option><option>1 mes</option><option>3 meses</option><option>Flexible</option></select></label>
+          <label className="field"><span>Offering (Organization Unit) <b>*</b></span><select value={form.offering} onChange={(e) => update("offering", e.target.value)}><option value="">Selecciona un offering</option>{catalog.areas.map((area) => <option key={area}>{area}</option>)}</select></label>
           <label className="field"><span>Porcentaje de ocupación</span><select value={form.occupancy} onChange={(e) => update("occupancy", e.target.value)}><option>100%</option><option>80%</option><option>60%</option><option>50%</option>{!["100%", "80%", "60%", "50%", "Flexible"].includes(form.occupancy) && <option>{form.occupancy}</option>}<option>Flexible</option></select></label>
           <label className="field"><span>Localización <b>*</b></span><select value={form.location} onChange={(e) => update("location", e.target.value)}><option value="">Selecciona una ciudad</option>{catalog.locations.map((city) => <option key={city.value}>{city.value}</option>)}<option>Remoto</option></select></label>
           <label className="field"><span>Modalidad</span><select value={form.modality} onChange={(e) => update("modality", e.target.value)}><option>Híbrido</option><option>Presencial</option><option>Remoto</option></select></label>
         </div>
 
-        <div className="form-section-heading form-section-spaced"><span className="form-section-number">02</span><div><h2>Requisitos y habilidades</h2><p>¿Qué necesita saber o haber hecho esta persona?</p></div></div>
+        <div className="form-section-heading form-section-spaced"><span className="form-section-number">02</span><div><h2>Requisitos</h2><p>Plazos y contexto del proyecto.</p><p className="form-note">La búsqueda por habilidades estará disponible próximamente, cuando se integre la IA.</p></div></div>
         <div className="form-grid">
-          <label className="field field-full"><span>Habilidades clave <b>*</b></span><input value={form.skills} onChange={(e) => update("skills", e.target.value)} placeholder="Ej. Azure, Python, Databricks, SQL" /><small>Separa las habilidades con comas.</small></label>
           <label className="field"><span>Fecha de inicio <b>*</b></span><input type="date" value={form.startDate} onChange={(e) => update("startDate", e.target.value)} /></label>
           <label className="field"><span>Duración estimada</span><select value={form.duration} onChange={(e) => update("duration", e.target.value)}><option>3 meses</option><option>6 meses</option><option>9 meses</option><option>12 meses</option><option>Indefinida</option></select></label>
           <label className="field field-full"><span>Descripción del proyecto</span><textarea rows="4" value={form.description} onChange={(e) => update("description", e.target.value)} placeholder="Contexto, responsabilidades y cualquier detalle que ayude a encontrar el perfil adecuado..." /></label>
@@ -328,12 +336,33 @@ function formatPercent(value) {
   return value === null || value === undefined ? "N/D" : `${value}%`;
 }
 
+function NoAssignmentData({ known }) {
+  if (known !== false) return null;
+  return <small className="data-warning" title="No hay ninguna asignación registrada en el CSV: la disponibilidad podría no ser real">Sin datos de asignación</small>;
+}
+
+function OccupancyCell({ assigned, capacity }) {
+  const unknown = assigned === null || assigned === undefined || capacity === null || capacity === undefined || capacity <= 0;
+  if (unknown) return <span title="Sin capacidad (FTE) o asignaciones conocidas">N/D</span>;
+  const pct = Math.round((assigned / capacity) * 100);
+  return (
+    <span className="occupancy-cell" title={`Asignaciones activas hoy: ${assigned} % sobre una capacidad de ${capacity} % (FTE × 100)`}>
+      <strong>{pct} %</strong>
+      <small>{assigned} de {capacity} % FTE</small>
+      <span className="occupancy-bar"><span style={{ width: `${Math.min(pct, 100)}%` }} className={pct > 100 ? "occupancy-over" : ""} /></span>
+    </span>
+  );
+}
+
 function ResultsPage({ demand, onBack, onOpenCandidate, onDemandChanged, onComplete }) {
   const [stage, setStage] = useState("initial");
   const [result, setResult] = useState({ key: "", search: null, selections: [], error: null });
   const [actionError, setActionError] = useState("");
   const [busyId, setBusyId] = useState("");
   const [query, setQuery] = useState("");
+  const [poolQuery, setPoolQuery] = useState("");
+  const [poolLocation, setPoolLocation] = useState("");
+  const [poolMinFree, setPoolMinFree] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const demandId = demand?.id;
   const demandClosed = demand ? ["Cubierta", "Cancelada"].includes(demand.status) : false;
@@ -385,7 +414,15 @@ function ResultsPage({ demand, onBack, onOpenCandidate, onDemandChanged, onCompl
   const matchesText = (candidate) =>
     !text || `${candidate.name} ${candidate.role} ${candidate.id}`.toLowerCase().includes(text);
   const visibleCandidates = (search?.candidates ?? []).filter(matchesText);
-  const transversalCandidates = (search?.transversal.candidates ?? []).filter(matchesText);
+  const poolAll = search?.transversal.candidates ?? [];
+  const poolLocations = [...new Set(poolAll.map((candidate) => candidate.location).filter(Boolean))].sort();
+  const transversalCandidates = poolAll.filter((candidate) => {
+    const needle = poolQuery.trim().toLowerCase();
+    if (needle && !`${candidate.name} ${candidate.id}`.toLowerCase().includes(needle)) return false;
+    if (poolLocation && candidate.location !== poolLocation) return false;
+    if (poolMinFree && !(candidate.availablePercent >= Number(poolMinFree))) return false;
+    return true;
+  });
   const mappingMissing = error?.code === "offering_mapping_missing";
 
   if (!demand) {
@@ -400,7 +437,7 @@ function ResultsPage({ demand, onBack, onOpenCandidate, onDemandChanged, onCompl
     <div className="results-page">
       <div className="results-back-row"><button className="back-link" onClick={onBack}>‹ Volver a demandas</button><span className="demo-pill"><i /> Perfiles de la base de datos</span></div>
       <div className="results-page-heading">
-        <div><p className="eyebrow">Búsqueda de talento · {demand.id}</p><h1>{demand.title}</h1><p>{demand.role} <span className="dot-separator">·</span> {demand.location} <span className="dot-separator">·</span> {demand.seniority} <span className="dot-separator">·</span> {demand.status}</p></div>
+        <div><p className="eyebrow">Búsqueda de talento · {demand.id}</p><h1>{demand.title}</h1><p>{demand.role || "Sin rol"} <span className="dot-separator">·</span> {demand.location} <span className="dot-separator">·</span> {demand.seniority} <span className="dot-separator">·</span> {demand.status}</p></div>
       </div>
       <div className="search-insight"><span className="insight-icon"><Icon name="filter" size={19} /></span><p><strong>Filtrado por datos, sin puntuación.</strong> La exportación de Staff no incluye habilidades, por lo que no se calcula afinidad ni se ordena por encaje. Los perfiles aparecen en orden alfabético.</p></div>
       <div className="search-stage">
@@ -471,8 +508,13 @@ function ResultsPage({ demand, onBack, onOpenCandidate, onDemandChanged, onCompl
             {visibleCandidates.length === 0 && <div className="empty-state"><span className="empty-icon"><Icon name="search" size={24} /></span><strong>{text ? "Ningún perfil coincide con el filtro" : stage === "initial" ? `No hay perfiles disponibles en ${demand.offering}` : "No hay perfiles disponibles en otros offerings"}</strong><p>{stage === "initial" ? "Puedes ampliar la búsqueda al resto de offerings." : "Revisa los criterios aplicados y los excluidos."}</p></div>}
           </div>
           <section className="transversal-section" aria-label="Bolsa transversal">
-            <h2>Bolsa transversal <span>{transversalCandidates.length}</span></h2>
-            <p>Personas sin offering asignado en los datos. Aparecen en todas las búsquedas, en cualquier etapa.</p>
+            <h2>Bolsa transversal <span>{transversalCandidates.length} de {poolAll.length}</span></h2>
+            <p>Analistas de otros offerings (Organization Unit). Aparecen en todas las búsquedas, en cualquier etapa, sin filtrar por el nivel de la demanda.</p>
+            <div className="talent-filters">
+              <label className="field"><span>Buscar</span><input value={poolQuery} onChange={(event) => setPoolQuery(event.target.value)} placeholder="Nombre o id" /></label>
+              <label className="field"><span>Ubicación</span><select value={poolLocation} onChange={(event) => setPoolLocation(event.target.value)}><option value="">Todas</option>{poolLocations.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label className="field"><span>Disponibilidad libre</span><select value={poolMinFree} onChange={(event) => setPoolMinFree(event.target.value)}><option value="">Cualquiera</option><option value="25">≥ 25 %</option><option value="50">≥ 50 %</option><option value="100">≥ 100 %</option></select></label>
+            </div>
             <div className="candidate-list">
               {transversalCandidates.map((candidate) => (
                 <CandidateCard
@@ -508,6 +550,7 @@ function CandidateCard({ candidate, saved, busy, disabled, onToggleSave, onOpen 
           <div className="candidate-name-row"><h2>{candidate.name}</h2><span className="candidate-id">{candidate.id}</span></div>
           <p className="candidate-role">{candidate.role || "Sin rol indicado"} <span>·</span> {candidate.careerLevel || "Nivel no indicado"}</p>
           <div className="candidate-meta"><span><Icon name="map" size={15} />{candidate.location || "Sin ubicación"}</span><span><Icon name="clock" size={15} />FTE {candidate.resourceFte || "N/D"} · libre {formatPercent(candidate.availablePercent)}</span><span><Icon name="briefcase" size={14} />{unit || "Sin offering"}</span></div>
+          {candidate.assignmentDataKnown === false && <p className="match-explanation data-warning">Sin datos de asignación: la disponibilidad podría no ser real.</p>}
           {candidate.unavailableAtPercent != null && <p className="match-explanation">Umbral de no disponibilidad del nivel: {candidate.unavailableAtPercent}%.</p>}
         </div>
       </button>
@@ -534,6 +577,8 @@ function CandidateModal({ candidate, onClose }) {
           {"assignedPercent" in candidate && <div><span>Asignado (activo)</span><strong>{formatPercent(candidate.assignedPercent)}</strong></div>}
           {"availablePercent" in candidate && <div><span>Capacidad libre</span><strong>{formatPercent(candidate.availablePercent)}</strong></div>}
           {candidate.industry && <div><span>Industria</span><strong>{candidate.industry}</strong></div>}
+          {candidate.industryKnown === false && <div><span>Industria</span><strong>Industria sin datos</strong></div>}
+          {candidate.assignmentDataKnown === false && <div><span>Asignaciones</span><strong>Sin datos de asignación</strong></div>}
         </div>
         <p className="match-explanation">La exportación no incluye habilidades ni currículum: no hay afinidad calculada.</p>
       </section>
@@ -547,6 +592,7 @@ function TalentPage({ onOpenCandidate }) {
   const [query, setQuery] = useState("");
   const [level, setLevel] = useState("");
   const [location, setLocation] = useState("");
+  const [offering, setOffering] = useState("");
   const [minFree, setMinFree] = useState("");
 
   useEffect(() => {
@@ -566,6 +612,7 @@ function TalentPage({ onOpenCandidate }) {
     if (needle && ![person.name, person.id, person.role].some((value) => (value || "").toLowerCase().includes(needle))) return false;
     if (level && person.careerLevel !== level) return false;
     if (location && person.location !== location) return false;
+    if (offering && person.organizationUnit !== offering) return false;
     if (minFree && !(person.availablePercent >= Number(minFree))) return false;
     return true;
   });
@@ -577,12 +624,13 @@ function TalentPage({ onOpenCandidate }) {
         <label className="field"><span>Buscar</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Nombre, id o rol" /></label>
         <label className="field"><span>Nivel de carrera</span><select value={level} onChange={(event) => setLevel(event.target.value)}><option value="">Todos</option>{options("careerLevel").map((value) => <option key={value}>{value}</option>)}</select></label>
         <label className="field"><span>Ubicación</span><select value={location} onChange={(event) => setLocation(event.target.value)}><option value="">Todas</option>{options("location").map((value) => <option key={value}>{value}</option>)}</select></label>
+              <label className="field"><span>Offering</span><select value={offering} onChange={(event) => setOffering(event.target.value)}><option value="">Todos</option>{options("organizationUnit").map((value) => <option key={value}>{value}</option>)}</select></label>
         <label className="field"><span>Disponibilidad libre</span><select value={minFree} onChange={(event) => setMinFree(event.target.value)}><option value="">Cualquiera</option><option value="25">≥ 25 %</option><option value="50">≥ 50 %</option><option value="100">≥ 100 %</option></select></label>
       </div>
       <p className="api-note" role="status">{filtered.length} de {people.length} personas</p>
       {filtered.length === 0 ? <p className="api-note">Ninguna persona coincide con la búsqueda.</p> : (
         <table className="mentees-table talent-table">
-          <thead><tr><th>Persona</th><th>Rol</th><th>Nivel</th><th>Ubicación</th><th>Ocupación</th><th>Libre</th></tr></thead>
+          <thead><tr><th>Persona</th><th>Rol</th><th>Nivel</th><th>Ubicación</th><th>Offering</th><th title="Suma de % de asignaciones activas hoy sobre la capacidad (FTE × 100)">Ocupación hoy ⓘ</th><th>Libre</th><th title="Un nivel debe estar asignado al menos a este % del nivel; por debajo está disponible">Obligatorio ⓘ</th></tr></thead>
           <tbody>
             {filtered.map((person) => (
               <tr key={person.id} className="clickable-row" tabIndex={0} onClick={() => onOpenCandidate(person)} onKeyDown={(event) => event.key === "Enter" && onOpenCandidate(person)}>
@@ -590,13 +638,72 @@ function TalentPage({ onOpenCandidate }) {
                 <td>{person.role || "N/D"}</td>
                 <td>{person.careerLevel || "N/D"}</td>
                 <td>{person.location || "N/D"}</td>
-                <td>{formatPercent(person.assignedPercent)} / {formatPercent(person.capacityPercent)}</td>
+                <td>{person.organizationUnit || "N/D"}</td>
+                <td><OccupancyCell assigned={person.assignedPercent} capacity={person.capacityPercent} /><NoAssignmentData known={person.assignmentDataKnown} /></td>
                 <td>{formatPercent(person.availablePercent)}</td>
+                <td>
+                  {formatPercent(person.requiredPercent)}{" "}
+                  {person.meetsRequired === null || person.meetsRequired === undefined ? null : (
+                    <span
+                      className={`status-pill ${person.meetsRequired ? "" : "pending"}`}
+                      title={`Un nivel ${person.careerLevel} debe estar asignado al menos al ${person.requiredPercent} %; por debajo está disponible`}
+                    >
+                      <i />{person.meetsRequired ? "Cumple" : "Pendiente"}
+                    </span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
+    </section>
+  );
+}
+
+const reports = [
+  { id: "staff", title: "Staff", description: "Todas las personas del Staff, con las columnas originales del CSV importado.", path: "reports/staff.csv", filename: "staff.csv" },
+  { id: "assignments", title: "Asignaciones", description: "Todas las asignaciones, con las columnas originales del CSV importado.", path: "reports/assignments.csv", filename: "assignments.csv" },
+];
+
+function ReportsPage() {
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+
+  const download = async (report) => {
+    setBusy(report.id);
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/${report.path}`);
+      if (!response.ok) throw new Error(`No se pudo descargar el informe (${response.status}).`);
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = report.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (downloadError) {
+      setError(downloadError.message);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <section className="reports-page">
+      <div className="page-heading"><div><p className="eyebrow">Datos</p><h1>Informes</h1><p>Descarga informes de la base de datos en CSV.</p></div></div>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="reports-grid">
+        {reports.map((report) => (
+          <article key={report.id} className="report-card">
+            <h2>{report.title}</h2>
+            <p>{report.description}</p>
+            <button className="button button-purple" disabled={busy === report.id} onClick={() => download(report)}>{busy === report.id ? "Descargando..." : "Descargar CSV"}</button>
+          </article>
+        ))}
+      </div>
     </section>
   );
 }
@@ -645,7 +752,7 @@ function MentorsPage() {
       {!detail && !error && <p className="api-note" role="status">Cargando...</p>}
       {detail && (
         <table className="mentees-table">
-          <thead><tr><th>Mentorado</th><th>Rol</th><th>Nivel</th><th>Ciudad</th><th>Ocupación</th><th>Asignaciones activas</th></tr></thead>
+          <thead><tr><th>Mentorado</th><th>Rol</th><th>Nivel</th><th>Ciudad</th><th title="Suma de % de asignaciones activas hoy sobre la capacidad (FTE × 100)">Ocupación hoy ⓘ</th><th>Asignaciones activas</th></tr></thead>
           <tbody>
             {detail.mentees.map((mentee) => (
               <tr key={mentee.id}>
@@ -653,10 +760,135 @@ function MentorsPage() {
                 <td>{mentee.role || "N/D"}</td>
                 <td>{mentee.careerLevel || "N/D"}</td>
                 <td>{mentee.location || "N/D"}</td>
-                <td>{formatPercent(mentee.assignedPercent)} / {formatPercent(mentee.capacityPercent)}</td>
+                <td><OccupancyCell assigned={mentee.assignedPercent} capacity={mentee.capacityPercent} /><NoAssignmentData known={mentee.assignmentDataKnown} /></td>
                 <td>{mentee.assignments.length === 0 ? "Sin asignaciones" : mentee.assignments.map((a) => `${a.project || "Sin proyecto"} (${a.assignmentPercent ?? "?"}%)`).join(", ")}</td>
               </tr>
             ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+const ASSIGNMENT_MODES = {
+  projects: { label: "Proyectos", key: "project", empty: "Sin proyecto", column: "Proyecto" },
+  clients: { label: "Clientes", key: "client", empty: "Sin cliente", column: "Cliente" },
+  levels: { label: "Career levels", key: "careerLevel", empty: "Sin nivel", column: "Career level" },
+  industries: { label: "Industrias", key: "industry", empty: "Sin industria", column: "Industria" },
+};
+
+export function groupAssignments(rows, mode) {
+  const { key, empty } = ASSIGNMENT_MODES[mode];
+  const groups = new Map();
+  for (const row of rows) {
+    const name = (row[key] || "").trim() || empty;
+    if (!groups.has(name)) groups.set(name, { name, rows: [], people: new Set(), clients: new Set(), projects: new Set(), fte: 0, start: null, end: null });
+    const group = groups.get(name);
+    group.rows.push(row);
+    group.people.add((row.resource || "").toLowerCase());
+    group.clients.add(row.client || "Sin cliente");
+    group.projects.add(row.project || "Sin proyecto");
+    group.fte += (row.assignmentPercent || 0) / 100;
+    if (row.startingOn && (!group.start || row.startingOn < group.start)) group.start = row.startingOn;
+    if (row.finishingOn && (!group.end || row.finishingOn > group.end)) group.end = row.finishingOn;
+  }
+  return [...groups.values()].sort((a, b) => b.fte - a.fte || a.name.localeCompare(b.name));
+}
+
+function AssignmentsPage() {
+  const [includeHistory, setIncludeHistory] = useState(false);
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState("");
+  const [mode, setMode] = useState("projects");
+  const [query, setQuery] = useState("");
+  const [level, setLevel] = useState("");
+  const [industry, setIndustry] = useState("");
+  const [open, setOpen] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    setRows(null);
+    setError("");
+    requestApi(`assignments/?scope=${includeHistory ? "all" : "active"}`)
+      .then((data) => { if (active) setRows(data.assignments); })
+      .catch((requestError) => { if (active) setError(requestError.message); });
+    return () => { active = false; };
+  }, [includeHistory]);
+
+  const changeMode = (next) => { setMode(next); setOpen(null); };
+
+  if (error) return <p className="form-error" role="alert">{error}</p>;
+  if (!rows) return <p className="api-note" role="status">Cargando...</p>;
+
+  const options = (key) => [...new Set(rows.map((row) => row[key]).filter(Boolean))].sort();
+  const needle = query.trim().toLowerCase();
+  const filtered = rows.filter((row) => {
+    if (needle && ![row.project, row.client, row.personName, row.resource].some((value) => (value || "").toLowerCase().includes(needle))) return false;
+    if (level && row.careerLevel !== level) return false;
+    if (industry && row.industry !== industry) return false;
+    return true;
+  });
+  const groups = groupAssignments(filtered, mode);
+  const maxFte = Math.max(...groups.map((group) => group.fte), 0);
+  const extraHeaders = { projects: ["Cliente", "Fechas"], clients: ["Proyectos"], levels: ["Clientes"], industries: ["Clientes"] }[mode];
+
+  return (
+    <section className="talent-page">
+      <div className="page-heading"><div><p className="eyebrow">Staff</p><h1>Asignaciones</h1><p>Reparto del trabajo por proyecto, cliente, nivel o industria.</p></div></div>
+      <div className="talent-filters">
+        <div className="mode-tabs" role="tablist" aria-label="Agrupar por">
+          {Object.entries(ASSIGNMENT_MODES).map(([id, item]) => (
+            <button key={id} type="button" role="tab" aria-selected={mode === id} className={mode === id ? "active" : ""} onClick={() => changeMode(id)}>{item.label}</button>
+          ))}
+        </div>
+        <label className="field"><span>Buscar</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Proyecto, cliente o persona" /></label>
+        <label className="field"><span>Nivel de carrera</span><select value={level} onChange={(event) => setLevel(event.target.value)}><option value="">Todos</option>{options("careerLevel").map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label className="field"><span>Industria</span><select value={industry} onChange={(event) => setIndustry(event.target.value)}><option value="">Todas</option>{options("industry").map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label className="field"><span>Histórico</span><span><input type="checkbox" checked={includeHistory} onChange={(event) => setIncludeHistory(event.target.checked)} /> Incluir histórico</span></label>
+      </div>
+      <p className="api-note" role="status">{filtered.length} asignaciones en {groups.length} grupos · {includeHistory ? "con histórico" : "solo vigentes hoy"}</p>
+      <p className="api-note">Nota: la cobertura de asignaciones es desigual entre unidades (p. ej. Digital Foundations casi no tiene), por lo que nivel e industria infrarrepresentan a esas personas.</p>
+      {groups.length === 0 ? <p className="api-note">Ninguna asignación coincide.</p> : (
+        <table className="mentees-table talent-table">
+          <thead><tr><th>{ASSIGNMENT_MODES[mode].column}</th><th>Asignaciones</th><th>Personas</th><th title="Suma de % de asignación / 100">FTE ⓘ</th>{extraHeaders.map((header) => <th key={header}>{header}</th>)}<th>Peso</th></tr></thead>
+          <tbody>
+            {groups.map((group) => {
+              const expanded = open === group.name;
+              const missing = group.name === ASSIGNMENT_MODES[mode].empty;
+              return [
+                <tr key={group.name} className="clickable-row group-row" tabIndex={0} aria-expanded={expanded} onClick={() => setOpen(expanded ? null : group.name)} onKeyDown={(event) => event.key === "Enter" && setOpen(expanded ? null : group.name)}>
+                  <td><strong>{expanded ? "▾" : "▸"} {group.name}</strong>{missing && <small className="data-warning"> dato ausente</small>}</td>
+                  <td>{group.rows.length}</td>
+                  <td>{group.people.size}</td>
+                  <td>{group.fte.toFixed(1)}</td>
+                  {mode === "projects" && <><td>{[...group.clients].join(", ")}</td><td>{formatDate(group.start)} – {formatDate(group.end)}</td></>}
+                  {mode === "clients" && <td>{group.projects.size}</td>}
+                  {(mode === "levels" || mode === "industries") && <td>{group.clients.size}</td>}
+                  <td><span className="occupancy-bar"><span style={{ width: `${maxFte ? (group.fte / maxFte) * 100 : 0}%` }} /></span></td>
+                </tr>,
+                expanded && (
+                  <tr key={`${group.name}-detail`} className="group-detail">
+                    <td colSpan={5 + extraHeaders.length}>
+                      <table className="mentees-table">
+                        <thead><tr><th>Persona</th><th>Nivel</th><th>Proyecto / cliente</th><th>Fechas</th><th>%</th></tr></thead>
+                        <tbody>
+                          {group.rows.map((row) => (
+                            <tr key={row.id}>
+                              <td><strong>{row.personName || row.resource || "N/D"}</strong>{row.personDeleted && <small> · baja</small>}<br /><small>{row.resource}</small></td>
+                              <td>{row.careerLevel || "Sin nivel"}</td>
+                              <td>{row.project || "Sin proyecto"}<br /><small>{row.client || "Sin cliente"}</small></td>
+                              <td>{formatDate(row.startingOn)} – {formatDate(row.finishingOn)}</td>
+                              <td>{formatPercent(row.assignmentPercent)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+                ),
+              ];
+            })}
           </tbody>
         </table>
       )}
@@ -806,8 +1038,8 @@ function DemandDetail({ demand, onClose, onSearch, onStatusChange, onDelete, onE
         <p className="eyebrow">Detalle de demanda · {demand.id}</p>
         <h2 id="demand-modal-title">{demand.title}</h2>
         <label className="field"><span>Estado</span><select value={demand.status} disabled={busy} onChange={(event) => run(() => onStatusChange(demand.id, event.target.value))}>{DEMAND_STATUSES.filter((status) => status !== "Cubierta" || demand.status === "Cubierta").map((status) => <option key={status}>{status}</option>)}</select><small>«Cubierta» se asigna al completar la demanda.</small></label>
-        <div className="detail-grid"><div><span>Rol</span><strong>{demand.role}</strong></div><div><span>Seniority</span><strong>{demand.seniority}</strong></div><div><span>Industria</span><strong>{demand.industry || "Sin especificar"}</strong></div><div><span>Offering</span><strong>{demand.offering || "Sin especificar"}</strong></div><div><span>Disponibilidad</span><strong>{demand.availability || "Flexible"}</strong></div><div><span>Ocupación</span><strong>{demand.occupancy || "Sin especificar"}</strong></div><div><span>Localización</span><strong>{demand.location} · {demand.modality}</strong></div><div><span>Inicio</span><strong>{formatDate(demand.startDate)}</strong></div><div><span>Duración</span><strong>{demand.duration}</strong></div></div>
-        <h3>Habilidades clave</h3><div className="skill-list modal-skills">{demand.skills.map((skill) => <span key={skill}>{skill}</span>)}</div>
+        <div className="detail-grid"><div><span>Rol</span><strong>{demand.role || "Sin rol"}</strong></div><div><span>Seniority</span><strong>{demand.seniority}</strong></div><div><span>Industria</span><strong>{demand.industry || "Sin especificar"}</strong></div><div><span>Offering (Org. Unit)</span><strong>{demand.offering || "Sin especificar"}</strong></div><div><span>Ocupación</span><strong>{demand.occupancy || "Sin especificar"}</strong></div><div><span>Localización</span><strong>{demand.location} · {demand.modality}</strong></div><div><span>Inicio</span><strong>{formatDate(demand.startDate)}</strong></div><div><span>Duración</span><strong>{demand.duration}</strong></div></div>
+        {demand.skills.length > 0 && <><h3>Habilidades clave</h3><div className="skill-list modal-skills">{demand.skills.map((skill) => <span key={skill}>{skill}</span>)}</div></>}
         {demand.description && <><h3>Descripción</h3><p>{demand.description}</p></>}
         {error && <p className="form-error" role="alert">{error}</p>}
         <button className="button button-purple modal-action" onClick={onSearch}>Ver y seleccionar candidatos <Icon name="arrow" size={16} /></button>
@@ -934,7 +1166,7 @@ function Workspace() {
     setReloadKey((key) => key + 1);
   }
 
-  const pageTitle = page === "home" ? "Inicio" : page === "demands" ? "Demandas" : page === "talent" ? "Talento" : page === "results" ? "Candidatos" : page === "mentors" ? "Mentores" : page === "edit" ? "Editar demanda" : "Crear demanda";
+  const pageTitle = page === "home" ? "Inicio" : page === "demands" ? "Demandas" : page === "talent" ? "Talento" : page === "results" ? "Candidatos" : page === "mentors" ? "Mentores" : page === "assignments" ? "Asignaciones" : page === "reports" ? "Informes" : page === "edit" ? "Editar demanda" : "Crear demanda";
 
   if (loading) {
     return <main className="api-state"><p>Cargando datos...</p></main>;
@@ -968,13 +1200,15 @@ function Workspace() {
               <div className="page-heading"><div><p className="eyebrow">Tu pipeline de talento</p><h1>Demandas</h1><p>Haz seguimiento de las búsquedas y encuentra el talento adecuado.</p></div><button className="button button-purple" onClick={() => setPage("create")}><Icon name="plus" size={17} /> Nueva demanda</button></div>
               <div className="demand-summary-row"><div><span className="summary-number">{demands.length}</span><span>Demandas registradas</span></div><div><span className="summary-number">{candidates.length}</span><span>Candidatos disponibles</span></div><div><span className="summary-number">{demands.filter((demand) => /cubierta|covered/i.test(demand.status)).length}</span><span>Demandas cubiertas</span></div></div>
               <div className="list-heading"><h2>Todas las demandas <span>{demands.length}</span></h2><button className="filter-button"><Icon name="filter" size={17} /> Filtrar</button></div>
-              <DemandTable demands={demands} onOpenDemand={openDemand} />
+              <DemandTable demands={demands} onOpenDemand={openDemand} onDelete={deleteDemand} />
             </div>
           )}
           {page === "create" && <DemandForm catalog={catalog} onCancel={() => setPage("demands")} onSubmit={createDemand} />}
           {page === "edit" && editingDemand && <DemandForm key={editingDemand.id} demand={editingDemand} catalog={catalog} onCancel={() => { setEditingDemand(null); setPage("demands"); }} onSubmit={saveDemand} />}
           {page === "talent" && <TalentPage onOpenCandidate={setDetailCandidate} />}
           {page === "mentors" && <MentorsPage />}
+          {page === "assignments" && <AssignmentsPage />}
+          {page === "reports" && <ReportsPage />}
           {page === "results" && <ResultsPage demand={activeDemand} onBack={() => setPage("demands")} onOpenCandidate={setDetailCandidate} onDemandChanged={refreshDemand} onComplete={setCompleting} />}
         </main>
       </div>
